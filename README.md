@@ -157,3 +157,10 @@ sh scripts/backup.sh
 - Docker Ubuntu 安装：https://docs.docker.com/engine/install/ubuntu/
 - Caddy HTTPS：https://caddyserver.com/docs/automatic-https
 - FastAPI 文件上传：https://fastapi.tiangolo.com/tutorial/request-files/
+
+
+## 评论更新
+
+每个帖子下支持双方文字评论（1–1000 字），显示作者、日期时间，仅评论作者能单独删除自己的评论。删除帖子会同时删除全部关联评论。评论不增加热力图热度；导出的记录 JSON 和完整数据库备份都包含评论。
+
+启动时通过 `CREATE TABLE IF NOT EXISTS` 增加评论表和索引，不需要重新创建账号，也不改写原有记录。建议升级前运行 `sudo sh scripts/backup.sh`，然后 `git pull --ff-only` 与 `sudo docker compose up -d --build`。前端构建产物已提交，无需在服务器安装 Node.js。

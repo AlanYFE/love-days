@@ -40,6 +40,8 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS attempts(ip TEXT,t REAL);
     CREATE TABLE IF NOT EXISTS entries(id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id),day TEXT NOT NULL,body TEXT NOT NULL,created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,entry_id TEXT REFERENCES entries(id) ON DELETE CASCADE,kind TEXT,mime TEXT,path TEXT,thumb TEXT);
+    CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
+    CREATE INDEX IF NOT EXISTS comments_entry_created ON comments(entry_id,created);
     ''')
 
 def password_hash(password, salt):
@@ -125,6 +127,10 @@ def records():
     with db() as c:
         entries = [dict(x) for x in c.execute('SELECT entries.*,users.name AS author FROM entries JOIN users ON users.id=entries.user_id ORDER BY day DESC,created DESC')]
         media = [dict(x) for x in c.execute('SELECT id,entry_id,kind,thumb FROM media')]
+        comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id ORDER BY comments.created,comments.id')]
+    by_comment_entry = {}
+    for comment in comments:
+        by_comment_entry.setdefault(comment['entry_id'], []).append(comment)
     by_entry = {}
     for m in media:
         m['url'] = '/media/' + m['id']
@@ -132,6 +138,7 @@ def records():
         by_entry.setdefault(m.pop('entry_id'), []).append(m)
     for e in entries:
         e['media'] = by_entry.get(e['id'], [])
+        e['comments'] = by_comment_entry.get(e['id'], [])
     return entries
 
 @app.get('/api/entries')
@@ -238,6 +245,39 @@ def delete(eid: str, request: Request):
                 (MEDIA / name).unlink(missing_ok=True)
     return {'ok':True}
 
+@app.post('/api/entries/{eid}/comments', status_code=201)
+async def add_comment(eid: str, request: Request):
+    u = user(request)
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(400, '评论格式无效')
+    body = payload.get('body') if isinstance(payload, dict) else None
+    if not isinstance(body, str) or not body.strip() or len(body) > 1000:
+        raise HTTPException(400, '评论需填写 1–1000 字')
+    comment = {'id': secrets.token_hex(16), 'entry_id': eid, 'user_id': u['id'],
+               'author': u['name'], 'body': body.strip(), 'created': time.time()}
+    with db() as c:
+        # Lock before checking the parent so deletion cannot race the insert.
+        c.execute('BEGIN IMMEDIATE')
+        if not c.execute('SELECT 1 FROM entries WHERE id=?', (eid,)).fetchone():
+            raise HTTPException(404, '帖子已删除或不存在')
+        c.execute('INSERT INTO comments VALUES(?,?,?,?,?)',
+                  (comment['id'], eid, u['id'], comment['body'], comment['created']))
+    return comment
+
+@app.delete('/api/comments/{cid}')
+def delete_comment(cid: str, request: Request):
+    u = user(request)
+    with db() as c:
+        comment = c.execute('SELECT user_id FROM comments WHERE id=?', (cid,)).fetchone()
+        if not comment:
+            raise HTTPException(404, '评论已删除或不存在')
+        if comment['user_id'] != u['id']:
+            raise HTTPException(403, '只能删除自己的评论')
+        c.execute('DELETE FROM comments WHERE id=? AND user_id=?', (cid, u['id']))
+    return {'ok': True}
+
 @app.get('/media/{mid}')
 @app.get('/media/{mid}/thumb')
 def media(mid: str, request: Request):
@@ -257,3 +297,4 @@ app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')
 @app.get('/')
 def home():
     return FileResponse(ROOT/'static'/'index.html')
+
