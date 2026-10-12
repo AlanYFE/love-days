@@ -117,3 +117,66 @@ def test_existing_database_upgrade_preserves_data(tmp_path):
         assert c.execute('SELECT body FROM entries').fetchone()[0]=='已有回忆'
         assert c.execute('SELECT name FROM users').fetchone()[0]=='旧账号'
         assert c.execute('SELECT count(*) FROM comments').fetchone()[0]==0
+
+def test_custom_emoji_and_reactions():
+    from app.main import EMOJI_DIR, MAX_EMOJI_BYTES
+    a=client(); b=client('partner'); anon=TestClient(app)
+    assert anon.get('/api/emojis').status_code==401
+    before=set(EMOJI_DIR.iterdir())
+    assert anon.post('/api/emojis',headers=HEADERS).status_code==401
+    for raw in (b'<svg><script>bad</script></svg>',b'GIF89anot-valid',b'x'*(MAX_EMOJI_BYTES+1)):
+        r=a.post('/api/emojis',data={'name':'bad'},files={'file':('x.gif',raw,'image/gif')},headers=HEADERS)
+        assert r.status_code in (400,413),r.text
+    assert set(EMOJI_DIR.iterdir())==before
+    gif=io.BytesIO()
+    Image.new('RGB',(24,24),'blue').save(gif,'GIF',save_all=True,append_images=[Image.new('RGB',(24,24),'red')],duration=120,loop=0)
+    raw=gif.getvalue()
+    r=a.post('/api/emojis',data={'name':'抱抱'},files={'file':('hug.gif',raw,'image/gif')},headers=HEADERS)
+    assert r.status_code==201,r.text
+    emoji=r.json(); emid=emoji['id']
+    assert any(e['id']==emid for e in b.get('/api/emojis').json())
+    assert anon.get(emoji['url']).status_code==401
+    image=b.get(emoji['url']);assert image.content==raw and image.headers['content-type']=='image/gif'
+    assert Image.open(io.BytesIO(image.content)).n_frames==2
+    eid=a.post('/api/entries',data={'day':'2026-10-12','body':'表情测试'},headers=HEADERS).json()['id']
+    endpoint='/api/entries/'+eid+'/comments'
+    for ids in ([emid]*9,['missing'],['f'*32],emid,[None]):
+        assert b.post(endpoint,json={'body':'','emoji_ids':ids},headers=HEADERS).status_code==400
+    r=b.post(endpoint,json={'body':'','emoji_ids':[emid,emid]},headers=HEADERS)
+    assert r.status_code==201,r.text
+    cid=r.json()['id']
+    for kind,target in [('entries',eid),('comments',cid)]:
+        url=f'/api/{kind}/{target}/reactions/{emid}'
+        assert anon.put(url,json={'active':True},headers=HEADERS).status_code==401
+        assert a.put(url,json={'active':True}).status_code==403
+        assert a.put(url,json={'active':'true'},headers=HEADERS).status_code==400
+        for _ in range(2):
+            assert a.put(url,json={'active':True},headers=HEADERS).status_code==200
+        assert b.put(url,json={'active':True},headers=HEADERS).status_code==200
+        e=next(e for e in b.get('/api/entries').json() if e['id']==eid)
+        parent=e if kind=='entries' else e['comments'][0]
+        assert parent['reactions'][0]['count']==2
+        assert set(parent['reactions'][0]['user_ids'])=={'alan','partner'}
+        for _ in range(2):
+            assert a.put(url,json={'active':False},headers=HEADERS).status_code==200
+        e=next(e for e in a.get('/api/entries').json() if e['id']==eid)
+        parent=e if kind=='entries' else e['comments'][0]
+        assert parent['reactions'][0]['count']==1
+        assert parent['reactions'][0]['user_ids']==['partner']
+    e=next(e for e in a.get('/api/export').json()['entries'] if e['id']==eid)
+    assert [x['id'] for x in e['comments'][0]['emojis']]==[emid,emid]
+    assert a.put(f'/api/entries/missing/reactions/{emid}',json={'active':True},headers=HEADERS).status_code==404
+    assert a.put(f'/api/entries/{eid}/reactions/missing',json={'active':True},headers=HEADERS).status_code==404
+    assert a.delete('/api/comments/'+cid,headers=HEADERS).status_code==403
+    assert b.delete('/api/comments/'+cid,headers=HEADERS).status_code==200
+    with db() as c:
+        assert not c.execute('SELECT 1 FROM comment_reactions WHERE target_id=?',(cid,)).fetchone()
+        assert not c.execute('SELECT 1 FROM comment_emojis WHERE comment_id=?',(cid,)).fetchone()
+    cid=b.post(endpoint,json={'body':'hello','emoji_ids':[emid]},headers=HEADERS).json()['id']
+    b.put(f'/api/comments/{cid}/reactions/{emid}',json={'active':True},headers=HEADERS)
+    assert a.delete('/api/entries/'+eid,headers=HEADERS).status_code==200
+    with db() as c:
+        assert not c.execute('SELECT 1 FROM entry_reactions WHERE target_id=?',(eid,)).fetchone()
+        assert not c.execute('SELECT 1 FROM comment_reactions WHERE target_id=?',(cid,)).fetchone()
+        assert not c.execute('SELECT 1 FROM comment_emojis WHERE comment_id=?',(cid,)).fetchone()
+    assert b.get(emoji['url']).status_code==200

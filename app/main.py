@@ -12,6 +12,9 @@ DATA = Path(os.getenv('DATA_DIR', str(ROOT.parent / 'data')))
 DATA.mkdir(parents=True, exist_ok=True)
 MEDIA = DATA / 'media'
 MEDIA.mkdir(exist_ok=True)
+EMOJI_DIR = DATA / 'emojis'
+EMOJI_DIR.mkdir(exist_ok=True)
+MAX_EMOJI_BYTES = 5 * 1024 * 1024
 PUBLIC_URL = os.getenv('PUBLIC_URL', 'http://localhost:8000').rstrip('/')
 MAX_FILE = 100 * 1024 * 1024
 MAX_TOTAL = 200 * 1024 * 1024
@@ -42,6 +45,10 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,entry_id TEXT REFERENCES entries(id) ON DELETE CASCADE,kind TEXT,mime TEXT,path TEXT,thumb TEXT);
     CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS comments_entry_created ON comments(entry_id,created);
+    CREATE TABLE IF NOT EXISTS emojis(id TEXT PRIMARY KEY,name TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),mime TEXT NOT NULL,created REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS comment_emojis(comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,position INTEGER NOT NULL,emoji_id TEXT NOT NULL REFERENCES emojis(id),PRIMARY KEY(comment_id,position));
+    CREATE TABLE IF NOT EXISTS entry_reactions(target_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,emoji_id TEXT NOT NULL REFERENCES emojis(id),user_id TEXT NOT NULL REFERENCES users(id),PRIMARY KEY(target_id,emoji_id,user_id));
+    CREATE TABLE IF NOT EXISTS comment_reactions(target_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,emoji_id TEXT NOT NULL REFERENCES emojis(id),user_id TEXT NOT NULL REFERENCES users(id),PRIMARY KEY(target_id,emoji_id,user_id));
     ''')
 
 def password_hash(password, salt):
@@ -123,13 +130,35 @@ def logout(request: Request):
     r.delete_cookie('blue_session')
     return r
 
+def emoji_data(row):
+    result = dict(row)
+    result['url'] = '/api/emojis/' + result['id'] + '/image'
+    return result
+
+def reaction_map(c, table):
+    # table is an internal constant, never a user-supplied SQL identifier.
+    groups = {}
+    for row in c.execute(f'SELECT r.target_id,r.user_id,e.id,e.name FROM {table} r JOIN emojis e ON e.id=r.emoji_id ORDER BY e.created,e.id,r.user_id'):
+        group = groups.setdefault(row['target_id'], {})
+        reaction = group.setdefault(row['id'], {'emoji':emoji_data({'id':row['id'],'name':row['name']}),'user_ids':[],'count':0})
+        reaction['user_ids'].append(row['user_id'])
+        reaction['count'] += 1
+    return {key:list(value.values()) for key,value in groups.items()}
+
 def records():
     with db() as c:
         entries = [dict(x) for x in c.execute('SELECT entries.*,users.name AS author FROM entries JOIN users ON users.id=entries.user_id ORDER BY day DESC,created DESC')]
         media = [dict(x) for x in c.execute('SELECT id,entry_id,kind,thumb FROM media')]
         comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id ORDER BY comments.created,comments.id')]
+        entry_reactions = reaction_map(c, 'entry_reactions')
+        comment_reactions = reaction_map(c, 'comment_reactions')
+        attached = {}
+        for row in c.execute('SELECT ce.comment_id,e.id,e.name FROM comment_emojis ce JOIN emojis e ON e.id=ce.emoji_id ORDER BY ce.comment_id,ce.position'):
+            attached.setdefault(row['comment_id'], []).append(emoji_data({'id':row['id'],'name':row['name']}))
     by_comment_entry = {}
     for comment in comments:
+        comment['emojis'] = attached.get(comment['id'], [])
+        comment['reactions'] = comment_reactions.get(comment['id'], [])
         by_comment_entry.setdefault(comment['entry_id'], []).append(comment)
     by_entry = {}
     for m in media:
@@ -139,6 +168,7 @@ def records():
     for e in entries:
         e['media'] = by_entry.get(e['id'], [])
         e['comments'] = by_comment_entry.get(e['id'], [])
+        e['reactions'] = entry_reactions.get(e['id'], [])
     return entries
 
 @app.get('/api/entries')
@@ -253,8 +283,11 @@ async def add_comment(eid: str, request: Request):
     except ValueError:
         raise HTTPException(400, '评论格式无效')
     body = payload.get('body') if isinstance(payload, dict) else None
-    if not isinstance(body, str) or not body.strip() or len(body) > 1000:
-        raise HTTPException(400, '评论需填写 1–1000 字')
+    emoji_ids = payload.get('emoji_ids', []) if isinstance(payload, dict) else []
+    if (not isinstance(body, str) or len(body) > 1000 or not isinstance(emoji_ids, list)
+            or len(emoji_ids) > 8 or any(not isinstance(e, str) or len(e) != 32 for e in emoji_ids)
+            or (not body.strip() and not emoji_ids)):
+        raise HTTPException(400, '请输入评论或选择表情；最多 1000 字和 8 个表情')
     comment = {'id': secrets.token_hex(16), 'entry_id': eid, 'user_id': u['id'],
                'author': u['name'], 'body': body.strip(), 'created': time.time()}
     with db() as c:
@@ -262,8 +295,12 @@ async def add_comment(eid: str, request: Request):
         c.execute('BEGIN IMMEDIATE')
         if not c.execute('SELECT 1 FROM entries WHERE id=?', (eid,)).fetchone():
             raise HTTPException(404, '帖子已删除或不存在')
+        for emoji_id in emoji_ids:
+            if not c.execute('SELECT 1 FROM emojis WHERE id=?', (emoji_id,)).fetchone():
+                raise HTTPException(400, '所选表情不存在，请刷新表情库')
         c.execute('INSERT INTO comments VALUES(?,?,?,?,?)',
                   (comment['id'], eid, u['id'], comment['body'], comment['created']))
+        c.executemany('INSERT INTO comment_emojis VALUES(?,?,?)', [(comment['id'], i, e) for i,e in enumerate(emoji_ids)])
     return comment
 
 @app.delete('/api/comments/{cid}')
@@ -277,6 +314,94 @@ def delete_comment(cid: str, request: Request):
             raise HTTPException(403, '只能删除自己的评论')
         c.execute('DELETE FROM comments WHERE id=? AND user_id=?', (cid, u['id']))
     return {'ok': True}
+
+def validate_emoji(path):
+    try:
+        with Image.open(path) as im:
+            if im.format not in ('PNG', 'JPEG', 'GIF', 'WEBP'):
+                raise ValueError('format')
+            mime = Image.MIME[im.format]
+            frames = getattr(im, 'n_frames', 1)
+            if max(im.size) > 2048 or frames > 200 or im.width * im.height * frames > 80_000_000:
+                raise ValueError('dimensions')
+            for index in range(frames):
+                im.seek(index)
+                im.load()
+            return mime
+    except Exception:
+        raise HTTPException(400, '请使用有效的 JPG、PNG、WebP 或 GIF；最长边 2048 像素，动画最多 200 帧，总像素不超过 8000 万')
+
+@app.get('/api/emojis')
+def list_emojis(request: Request):
+    user(request)
+    with db() as c:
+        return [emoji_data(row) for row in c.execute('SELECT id,name,user_id,created FROM emojis ORDER BY created DESC,id')]
+
+@app.post('/api/emojis', status_code=201)
+async def upload_emoji(request: Request):
+    u = user(request)
+    path = None
+    try:
+        async with request.form(max_files=1, max_fields=1, max_part_size=4096) as form:
+            file = form.get('file')
+            name = form.get('name', '')
+            if not hasattr(file, 'read') or not isinstance(name, str) or not 1 <= len(name.strip()) <= 24:
+                raise HTTPException(400, '请选择图片，并填写 1–24 字的表情名称')
+            eid = secrets.token_hex(16)
+            path = EMOJI_DIR / eid
+            size = 0
+            with path.open('wb') as out:
+                while chunk := await file.read(256 * 1024):
+                    size += len(chunk)
+                    if size > MAX_EMOJI_BYTES:
+                        raise HTTPException(413, '表情图片不能超过 5 MB')
+                    out.write(chunk)
+            mime = await asyncio.to_thread(validate_emoji, path)
+            created = time.time()
+            with db() as c:
+                c.execute('BEGIN IMMEDIATE')
+                if c.execute('SELECT count(*) FROM emojis').fetchone()[0] >= 100:
+                    raise HTTPException(400, '共享表情库最多保存 100 个表情')
+                c.execute('INSERT INTO emojis VALUES(?,?,?,?,?)', (eid,name.strip(),u['id'],mime,created))
+        return emoji_data({'id':eid,'name':name.strip(),'user_id':u['id'],'created':created})
+    except BaseException:
+        if path:
+            path.unlink(missing_ok=True)
+        raise
+
+@app.get('/api/emojis/{eid}/image')
+def emoji_image(eid: str, request: Request):
+    user(request)
+    with db() as c:
+        row = c.execute('SELECT id,mime FROM emojis WHERE id=?', (eid,)).fetchone()
+    if not row or not (EMOJI_DIR / row['id']).is_file():
+        raise HTTPException(404, '表情不存在')
+    return FileResponse(EMOJI_DIR / row['id'], media_type=row['mime'])
+
+@app.put('/api/{kind}/{target_id}/reactions/{emoji_id}')
+async def set_reaction(kind: str, target_id: str, emoji_id: str, request: Request):
+    u = user(request)
+    tables = {'entries':('entries','entry_reactions'), 'comments':('comments','comment_reactions')}
+    if kind not in tables:
+        raise HTTPException(404)
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(400, '回应格式无效')
+    if not isinstance(payload, dict) or type(payload.get('active')) is not bool:
+        raise HTTPException(400, '请指定是否选中表情')
+    parent, table = tables[kind]
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if not c.execute(f'SELECT 1 FROM {parent} WHERE id=?', (target_id,)).fetchone():
+            raise HTTPException(404, '帖子或评论已删除')
+        if not c.execute('SELECT 1 FROM emojis WHERE id=?', (emoji_id,)).fetchone():
+            raise HTTPException(404, '表情不存在')
+        if payload['active']:
+            c.execute(f'INSERT OR IGNORE INTO {table} VALUES(?,?,?)', (target_id,emoji_id,u['id']))
+        else:
+            c.execute(f'DELETE FROM {table} WHERE target_id=? AND emoji_id=? AND user_id=?', (target_id,emoji_id,u['id']))
+    return {'ok':True}
 
 @app.get('/media/{mid}')
 @app.get('/media/{mid}/thumb')
