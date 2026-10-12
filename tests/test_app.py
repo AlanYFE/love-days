@@ -180,3 +180,33 @@ def test_custom_emoji_and_reactions():
         assert not c.execute('SELECT 1 FROM comment_reactions WHERE target_id=?',(cid,)).fetchone()
         assert not c.execute('SELECT 1 FROM comment_emojis WHERE comment_id=?',(cid,)).fetchone()
     assert b.get(emoji['url']).status_code==200
+
+def test_edit_entry_permissions_validation_and_preservation():
+    with db() as c:
+        c.execute('DELETE FROM attempts')
+    a=client(); b=client('partner'); anon=TestClient(app)
+    png=io.BytesIO(); Image.new('RGB',(8,8),'blue').save(png,'PNG')
+    eid=a.post('/api/entries',data={'day':'2026-10-12','body':'原文'},files={'files':('a.png',png.getvalue(),'image/png')},headers=HEADERS).json()['id']
+    b.post('/api/entries/'+eid+'/comments',json={'body':'留言'},headers=HEADERS)
+    before=next(e for e in a.get('/api/entries').json() if e['id']==eid)
+    url='/api/entries/'+eid
+    payload={'day':'2025-08-25','body':'修改后的文字','original':{'day':before['day'],'body':before['body']}}
+    assert anon.patch(url,json=payload,headers=HEADERS).status_code==401
+    assert b.patch(url,json=payload,headers=HEADERS).status_code==403
+    assert a.patch(url,json=payload).status_code==403
+    for bad in ({**payload,'day':'2026-02-30'},{**payload,'body':'x'*5001},{**payload,'body':None},[],{**payload,'day':'1800-01-01'}):
+        assert a.patch(url,json=bad,headers=HEADERS).status_code==400
+    assert a.patch(url,content='{',headers=HEADERS).status_code==400
+    assert a.patch('/api/entries/missing',json=payload,headers=HEADERS).status_code==404
+    assert a.patch(url,json=payload,headers=HEADERS).status_code==200
+    after=next(e for e in b.get('/api/entries').json() if e['id']==eid)
+    assert after['day']==payload['day'] and after['body']==payload['body']
+    for key in ('media','comments','reactions','created','user_id'):
+        assert before[key]==after[key]
+    assert b.get(after['media'][0]['url']).content==png.getvalue()
+    assert a.patch(url,json=payload,headers=HEADERS).status_code==409
+    payload['original']={'day':after['day'],'body':after['body']};payload['body']=''
+    assert a.patch(url,json=payload,headers=HEADERS).status_code==200
+    eid=a.post('/api/entries',data={'day':'2026-10-12','body':'文字帖'},headers=HEADERS).json()['id']
+    payload={'day':'2026-10-12','body':'  ','original':{'day':'2026-10-12','body':'文字帖'}}
+    assert a.patch('/api/entries/'+eid,json=payload,headers=HEADERS).status_code==400

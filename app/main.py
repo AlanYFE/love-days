@@ -258,6 +258,38 @@ async def create(request: Request):
             p.unlink(missing_ok=True)
         raise
 
+@app.patch('/api/entries/{eid}')
+async def edit_entry(eid: str, request: Request):
+    u = user(request)
+    try:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError()
+        day, body = payload.get('day'), payload.get('body')
+        if not isinstance(day, str) or not isinstance(body, str) or len(body) > 5000:
+            raise ValueError()
+        parsed = date.fromisoformat(day)
+        if parsed.isoformat() != day or not 1900 <= parsed.year <= 2200:
+            raise ValueError()
+        original = payload.get('original')
+        if not isinstance(original, dict) or not all(isinstance(original.get(k), str) for k in ('day', 'body')):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(400, '编辑内容无效：请检查日期和文字（最多 5000 字）')
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        entry = c.execute('SELECT * FROM entries WHERE id=?', (eid,)).fetchone()
+        if not entry:
+            raise HTTPException(404, '帖子已删除或不存在')
+        if entry['user_id'] != u['id']:
+            raise HTTPException(403, '只能编辑自己发布的记录')
+        if any(entry[k] != original[k] for k in ('day', 'body')):
+            raise HTTPException(409, '这条记录已在其他页面修改，请保留草稿，关闭并刷新后重新编辑')
+        if not body.strip() and not c.execute('SELECT 1 FROM media WHERE entry_id=?', (eid,)).fetchone():
+            raise HTTPException(400, '没有附件的记录不能清空文字')
+        c.execute('UPDATE entries SET day=?,body=? WHERE id=?', (day, body.strip(), eid))
+    return {'ok': True, 'id': eid, 'day': day}
+
 @app.delete('/api/entries/{eid}')
 def delete(eid: str, request: Request):
     u = user(request)
@@ -422,4 +454,3 @@ app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')
 @app.get('/')
 def home():
     return FileResponse(ROOT/'static'/'index.html')
-
