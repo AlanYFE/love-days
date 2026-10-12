@@ -1,1 +1,2 @@
-{"name":"blue-days","private":true,"version":"0.1.0","scripts":{"build":"esbuild frontend.jsx --bundle --minify --outfile=app/static/app.js"},"dependencies":{"react":"^19.0.0","react-dom":"^19.0.0"},"devDependencies":{"esbuild":"^0.25.0"}}
+{"name":"love-days","private":true,"version":"0.1.0","scripts":{"build":"esbuild frontend.jsx --bundle --minify --outfile=app/static/app.js"},"dependencies":{"react":"^19.0.0","react-dom":"^19.0.0"},"devDependencies":{"esbuild":"^0.25.0"}}
+

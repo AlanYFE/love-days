@@ -179,7 +179,7 @@ def entries(request: Request):
 @app.get('/api/export')
 def export(request: Request):
     user(request)
-    return JSONResponse({'version':1,'entries':records()}, headers={'Content-Disposition':'attachment; filename="blue-days-records.json"'})
+    return JSONResponse({'version':1,'entries':records()}, headers={'Content-Disposition':'attachment; filename="love-days-records.json"'})
 
 def make_image(source, dest):
     with Image.open(source) as im:
