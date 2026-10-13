@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
+from .live import motion_range, extract_motion, still_jpeg, transcode_motion
 
 ROOT = Path(__file__).parent
 DATA = Path(os.getenv('DATA_DIR', str(ROOT.parent / 'data')))
@@ -16,6 +17,7 @@ EMOJI_DIR = DATA / 'emojis'
 EMOJI_DIR.mkdir(exist_ok=True)
 MAX_EMOJI_BYTES = 5 * 1024 * 1024
 PUBLIC_URL = os.getenv('PUBLIC_URL', 'http://localhost:8000').rstrip('/')
+LIVE_PROCESSING = asyncio.Semaphore(1)
 MAX_FILE = 100 * 1024 * 1024
 MAX_TOTAL = 200 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 40_000_000
@@ -46,6 +48,7 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS tags(id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS entry_tags(entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id),PRIMARY KEY(entry_id,tag_id));
     CREATE INDEX IF NOT EXISTS entry_tags_tag ON entry_tags(tag_id,entry_id);
+    CREATE TABLE IF NOT EXISTS media_extras(media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,display TEXT,motion TEXT,companion TEXT);
     CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS comments_entry_created ON comments(entry_id,created);
     CREATE TABLE IF NOT EXISTS emojis(id TEXT PRIMARY KEY,name TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),mime TEXT NOT NULL,created REAL NOT NULL);
@@ -195,6 +198,7 @@ def records():
     with db() as c:
         entries = [dict(x) for x in c.execute('SELECT entries.*,users.name AS author FROM entries JOIN users ON users.id=entries.user_id ORDER BY day DESC,created DESC')]
         media = [dict(x) for x in c.execute('SELECT id,entry_id,kind,thumb FROM media')]
+        extras = {r['media_id']:dict(r) for r in c.execute('SELECT * FROM media_extras')}
         comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id ORDER BY comments.created,comments.id')]
         entry_reactions = reaction_map(c, 'entry_reactions')
         comment_reactions = reaction_map(c, 'comment_reactions')
@@ -211,6 +215,10 @@ def records():
         by_comment_entry.setdefault(comment['entry_id'], []).append(comment)
     by_entry = {}
     for m in media:
+        extra = extras.get(m['id'], {})
+        m['live'] = bool(extra.get('motion'))
+        m['motion_url'] = '/media/' + m['id'] + '/motion' if m['live'] else None
+        m['original_url'] = '/media/' + m['id'] + '/original' if extra else None
         m['url'] = '/media/' + m['id']
         m['thumb'] = '/media/' + m['id'] + '/thumb' if m['thumb'] else None
         by_entry.setdefault(m.pop('entry_id'), []).append(m)
@@ -258,7 +266,7 @@ async def create(request: Request):
     u = user(request)  # Authenticate before parsing large multipart bodies.
     paths = []
     try:
-        async with request.form(max_files=12, max_fields=3, max_part_size=64*1024) as form:
+        async with request.form(max_files=24, max_fields=4, max_part_size=64*1024) as form:
             day = form.get('day','')
             body = form.get('body','')
             try:
@@ -273,11 +281,22 @@ async def create(request: Request):
             with db() as c:
                 check_tags(c, tag_ids)
             files = form.getlist('files')
+            if len(files) > 12:
+                raise HTTPException(400, '每条记录最多 12 个附件')
+            try:
+                options = json.loads(form.get('live_options', 'null'))
+                if options is not None and (not isinstance(options, list) or len(options) != len(files) or any(not isinstance(o, dict) or type(o.get('enabled')) is not bool or type(o.get('paired')) is not bool for o in options)):
+                    raise ValueError()
+                for key,value in form.multi_items():
+                    if hasattr(value, 'read') and key != 'files' and (options is None or key not in {f'live_{i}' for i,o in enumerate(options) if o['enabled'] and o['paired']}):
+                        raise ValueError()
+            except (ValueError, TypeError):
+                raise HTTPException(400, '实况选项无效，请重新选择附件')
             if not body.strip() and not files:
                 raise HTTPException(400, '请写点文字或添加照片／视频')
             eid = secrets.token_hex(16)
-            rows, total = [], 0
-            for f in files:
+            rows, extra_rows, total = [], [], 0
+            for index, f in enumerate(files):
                 if not hasattr(f, 'read'):
                     raise HTTPException(400,'附件无效')
                 mid = secrets.token_hex(16)
@@ -293,23 +312,77 @@ async def create(request: Request):
                         out.write(chunk)
                 thumb = MEDIA / (mid+'.jpg')
                 paths.append(thumb)
+                display = motion = companion = None
                 try:
                     await asyncio.to_thread(make_image,path,thumb)
                     with Image.open(path) as original:
                         kind, mime = 'image', Image.MIME.get(original.format, 'image/jpeg')
+                        heif = original.format in ('HEIF', 'AVIF')
                 except Exception:
                     with path.open('rb') as stream:
                         head = stream.read(32)
                     if head[4:8] != b'ftyp' or head[8:12] in (b'heic',b'heix',b'mif1',b'avif') or not await asyncio.to_thread(validate_video,path):
-                        raise HTTPException(400,'支持 JPG、PNG、WebP 图片和 MP4／MOV 视频；HEIC 请先转为 JPG')
+                        raise HTTPException(400,'图片或视频无法读取，请使用 JPG、PNG、WebP、HEIC 或 MP4／MOV')
                     kind, mime = 'video', 'video/mp4'
                     await asyncio.to_thread(video_thumb,path,thumb)
+                choice = options[index] if options is not None else {'enabled':True,'paired':False}
+                if kind == 'image':
+                    try:
+                        # A damaged live file can still be explicitly saved as a still.
+                        span = await asyncio.to_thread(motion_range,path) if choice['enabled'] else None
+                        if choice['paired'] and choice['enabled']:
+                            fpair = form.get('live_'+str(index))
+                            if not hasattr(fpair, 'read'):
+                                raise ValueError('请补选实况对应的视频')
+                            companion = MEDIA / (mid+'.source.mov')
+                            paths.append(companion)
+                            pair_size = 0
+                            with companion.open('wb') as out:
+                                while chunk := await fpair.read(1024*1024):
+                                    pair_size += len(chunk)
+                                    total += len(chunk)
+                                    if pair_size > MAX_FILE or total > MAX_TOTAL:
+                                        raise HTTPException(413, '配套视频计入上传限制：单个 100 MB，合计 200 MB')
+                                    out.write(chunk)
+                        elif span:
+                            companion = MEDIA / (mid+'.source.mov')
+                            paths.append(companion)
+                            await asyncio.to_thread(extract_motion,path,companion,span)
+                        elif options is not None and choice['enabled']:
+                            raise ValueError('没有收到实况视频，请从文件中选择原图、补选配套视频，或取消保留实况')
+                        if companion:
+                            motion = MEDIA / (mid+'.live.mp4')
+                            paths.append(motion)
+                            async with LIVE_PROCESSING:
+                                await asyncio.to_thread(transcode_motion,companion,motion)
+                        if heif or motion:
+                            display = MEDIA / (mid+'.display.jpg')
+                            paths.append(display)
+                            await asyncio.to_thread(still_jpeg,path,display)
+                        elif not choice['enabled']:
+                            # Strip embedded motion when the user chooses "still only".
+                            with path.open('rb') as stream:
+                                head = stream.read(1024*1024)
+                            if b'MotionPhoto' in head or b'MicroVideo' in head:
+                                display = MEDIA / (mid+'.display.jpg')
+                                paths.append(display)
+                                await asyncio.to_thread(still_jpeg,path,display)
+                                display.replace(path)
+                                display = None
+                                mime = 'image/jpeg'
+                    except ValueError as exc:
+                        raise HTTPException(400, str(exc))
+                    if display or motion or companion:
+                        extra_rows.append((mid,display.name if display else None,motion.name if motion else None,companion.name if companion else None))
+                elif options is not None and (choice['enabled'] or choice['paired']):
+                    raise HTTPException(400, '实况选项只适用于照片')
                 rows.append((mid,eid,kind,mime,mid,thumb.name if thumb.exists() else None))
             with db() as c:
                 c.execute('BEGIN IMMEDIATE')
                 check_tags(c, tag_ids)
                 c.execute('INSERT INTO entries VALUES(?,?,?,?,?)',(eid,u['id'],day,body.strip(),time.time()))
                 c.executemany('INSERT INTO media VALUES(?,?,?,?,?,?)',rows)
+                c.executemany('INSERT INTO media_extras VALUES(?,?,?,?)',extra_rows)
                 c.executemany('INSERT INTO entry_tags VALUES(?,?)', [(eid,tid) for tid in tag_ids])
         return {'id':eid}
     except BaseException:
@@ -369,6 +442,7 @@ def delete(eid: str, request: Request):
         if e['user_id']!=u['id']:
             raise HTTPException(403,'只能删除自己发布的记录')
         rows = c.execute('SELECT path,thumb FROM media WHERE entry_id=?',(eid,)).fetchall()
+        rows += c.execute('SELECT x.display,x.motion,x.companion FROM media_extras x JOIN media m ON m.id=x.media_id WHERE m.entry_id=?',(eid,)).fetchall()
         c.execute('DELETE FROM entries WHERE id=?',(eid,))
     for row in rows:
         for name in row:
@@ -506,17 +580,26 @@ async def set_reaction(kind: str, target_id: str, emoji_id: str, request: Reques
 
 @app.get('/media/{mid}')
 @app.get('/media/{mid}/thumb')
+@app.get('/media/{mid}/motion')
+@app.get('/media/{mid}/original')
 def media(mid: str, request: Request):
     user(request)
     with db() as c:
         m = c.execute('SELECT * FROM media WHERE id=?',(mid,)).fetchone()
+        extra = c.execute('SELECT * FROM media_extras WHERE media_id=?',(mid,)).fetchone()
     if not m:
         raise HTTPException(404)
-    is_thumb = request.url.path.endswith('/thumb')
-    name = m['thumb'] if is_thumb else m['path']
+    suffix = request.url.path.rsplit('/',1)[-1]
+    name, mime = m['path'], m['mime']
+    if suffix == 'thumb':
+        name, mime = m['thumb'], 'image/jpeg'
+    elif suffix == 'motion':
+        name, mime = extra['motion'] if extra else None, 'video/mp4'
+    elif suffix != 'original' and extra and extra['display']:
+        name, mime = extra['display'], 'image/jpeg'
     if not name or not (MEDIA/name).is_file():
         raise HTTPException(404)
-    return FileResponse(MEDIA/name, media_type='image/jpeg' if is_thumb else m['mime'])
+    return FileResponse(MEDIA/name, media_type=mime)
 
 app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')
 
