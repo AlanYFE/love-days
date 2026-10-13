@@ -308,3 +308,11 @@ def test_full_tag_library_still_reuses_existing_tag(monkeypatch):
     monkeypatch.setattr(main,'MAX_TAGS',count)
     assert a.post('/api/tags',json={'name':'容量测试'},headers=HEADERS).json()==tag
     assert a.post('/api/tags',json={'name':'已超出容量'},headers=HEADERS).status_code==400
+
+def test_anniversaries_private():
+    assert TestClient(app).get('/api/anniversaries').status_code == 401
+    with db() as c:
+        c.execute('DELETE FROM attempts')
+    data=client().get('/api/anniversaries').json()
+    assert data['together']=='2026-03-21'
+    assert data['birthdays']==[{'name':'飞飞','day':'2000-09-22'},{'name':'巧巧','day':'2000-08-25'}]

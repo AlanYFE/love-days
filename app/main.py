@@ -128,6 +128,14 @@ async def login(request: Request):
 def me(request: Request):
     return user(request)
 
+@app.get('/api/anniversaries')
+def anniversaries(request: Request):
+    user(request)
+    return {'together':'2026-03-21','birthdays':[
+        {'name':'飞飞','day':'2000-09-22'},
+        {'name':'巧巧','day':'2000-08-25'},
+    ]}
+
 @app.post('/api/logout')
 def logout(request: Request):
     with db() as c:

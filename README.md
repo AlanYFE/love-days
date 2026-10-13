@@ -202,3 +202,8 @@ sh scripts/backup.sh
 - 新增 media_extras 关联表，兼容旧数据库；删除帖子会清理原图、展示图和动态文件，所有媒体接口均要求登录。
 - 真实 iPhone 资源和两台手机的相册传输链路尚待实测。无法从已变成静态 JPEG 的文件恢复动态。
 - 测试：`PYTHONPATH=. pytest tests -q`；设置 `LIVE_SAMPLE=/path/to/original.jpg` 可额外验证私有 OPPO 样本（样本不进入 Git）。
+
+
+### 纪念日
+登录后通过 `/api/anniversaries` 读取相恋日与两位成员的公历生日（配置位于 `app/main.py`）。照片月历和全年热力图标记生日、每半年/周年、每 100 天；首页显示未来四项及倒计时，可点击跳转。相恋当天计第 1 天；日期差使用 UTC 日期运算，今天按 Asia/Shanghai 计算，页面每 30 秒及重新获得焦点时更新。多项纪念日同日保留全部；不生成帖子，不改变热力计数。当前不包含自定义纪念日编辑或推送通知。
+日期测试：`node --test tests/anniversaries.test.mjs`。
