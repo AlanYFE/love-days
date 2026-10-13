@@ -1,4 +1,4 @@
-import asyncio, hashlib, hmac, json, os, secrets, sqlite3, subprocess, time, warnings
+import asyncio, hashlib, hmac, json, os, secrets, sqlite3, subprocess, time, warnings, unicodedata
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
@@ -43,6 +43,9 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS attempts(ip TEXT,t REAL);
     CREATE TABLE IF NOT EXISTS entries(id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id),day TEXT NOT NULL,body TEXT NOT NULL,created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,entry_id TEXT REFERENCES entries(id) ON DELETE CASCADE,kind TEXT,mime TEXT,path TEXT,thumb TEXT);
+    CREATE TABLE IF NOT EXISTS tags(id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS entry_tags(entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id),PRIMARY KEY(entry_id,tag_id));
+    CREATE INDEX IF NOT EXISTS entry_tags_tag ON entry_tags(tag_id,entry_id);
     CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS comments_entry_created ON comments(entry_id,created);
     CREATE TABLE IF NOT EXISTS emojis(id TEXT PRIMARY KEY,name TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),mime TEXT NOT NULL,created REAL NOT NULL);
@@ -145,6 +148,49 @@ def reaction_map(c, table):
         reaction['count'] += 1
     return {key:list(value.values()) for key,value in groups.items()}
 
+MAX_TAGS = 200
+MAX_ENTRY_TAGS = 8
+
+def validate_tag_ids(value):
+    if not isinstance(value, list) or len(value) > MAX_ENTRY_TAGS or any(not isinstance(t, str) or len(t) != 32 for t in value):
+        raise HTTPException(400, '每条记录最多选择 8 个有效标签')
+    return list(dict.fromkeys(value))
+
+def check_tags(c, tag_ids):
+    for tid in tag_ids:
+        if not c.execute('SELECT 1 FROM tags WHERE id=?', (tid,)).fetchone():
+            raise HTTPException(400, '所选标签不存在，请重新选择')
+
+@app.get('/api/tags')
+def list_tags(request: Request):
+    user(request)
+    with db() as c:
+        return [dict(r) for r in c.execute('SELECT id,name FROM tags ORDER BY created,name_key')]
+
+@app.post('/api/tags')
+async def create_tag(request: Request):
+    u = user(request)
+    try:
+        payload = await request.json()
+        name = payload.get('name') if isinstance(payload, dict) else None
+        if not isinstance(name, str) or len(name) > 200:
+            raise ValueError()
+        name = ' '.join(unicodedata.normalize('NFKC', name).split())
+        if not 1 <= len(name) <= 24 or any(unicodedata.category(ch) == 'Cc' for ch in name):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(400, '标签名称请填写 1–24 个字')
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        existing = c.execute('SELECT id,name FROM tags WHERE name_key=?', (name.casefold(),)).fetchone()
+        if existing:
+            return JSONResponse(dict(existing), status_code=200)
+        if c.execute('SELECT count(*) FROM tags').fetchone()[0] >= MAX_TAGS:
+            raise HTTPException(400, '共享标签库最多保存 200 个标签，请选择已有标签')
+        tag = {'id':secrets.token_hex(16), 'name':name}
+        c.execute('INSERT INTO tags VALUES(?,?,?,?,?)', (tag['id'],name,name.casefold(),u['id'],time.time()))
+    return JSONResponse(tag, status_code=201)
+
 def records():
     with db() as c:
         entries = [dict(x) for x in c.execute('SELECT entries.*,users.name AS author FROM entries JOIN users ON users.id=entries.user_id ORDER BY day DESC,created DESC')]
@@ -152,6 +198,9 @@ def records():
         comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id ORDER BY comments.created,comments.id')]
         entry_reactions = reaction_map(c, 'entry_reactions')
         comment_reactions = reaction_map(c, 'comment_reactions')
+        tagged = {}
+        for row in c.execute('SELECT et.entry_id,t.id,t.name FROM entry_tags et JOIN tags t ON t.id=et.tag_id ORDER BY t.created,t.id'):
+            tagged.setdefault(row['entry_id'], []).append({'id':row['id'],'name':row['name']})
         attached = {}
         for row in c.execute('SELECT ce.comment_id,e.id,e.name FROM comment_emojis ce JOIN emojis e ON e.id=ce.emoji_id ORDER BY ce.comment_id,ce.position'):
             attached.setdefault(row['comment_id'], []).append(emoji_data({'id':row['id'],'name':row['name']}))
@@ -166,6 +215,7 @@ def records():
         m['thumb'] = '/media/' + m['id'] + '/thumb' if m['thumb'] else None
         by_entry.setdefault(m.pop('entry_id'), []).append(m)
     for e in entries:
+        e['tags'] = tagged.get(e['id'], [])
         e['media'] = by_entry.get(e['id'], [])
         e['comments'] = by_comment_entry.get(e['id'], [])
         e['reactions'] = entry_reactions.get(e['id'], [])
@@ -216,6 +266,12 @@ async def create(request: Request):
                     raise ValueError()
             except (ValueError, TypeError):
                 raise HTTPException(400,'日期无效，或文字超过 5000 字')
+            try:
+                tag_ids = validate_tag_ids(json.loads(form.get('tag_ids', '[]')))
+            except (ValueError, TypeError):
+                raise HTTPException(400, '标签格式无效')
+            with db() as c:
+                check_tags(c, tag_ids)
             files = form.getlist('files')
             if not body.strip() and not files:
                 raise HTTPException(400, '请写点文字或添加照片／视频')
@@ -250,8 +306,11 @@ async def create(request: Request):
                     await asyncio.to_thread(video_thumb,path,thumb)
                 rows.append((mid,eid,kind,mime,mid,thumb.name if thumb.exists() else None))
             with db() as c:
+                c.execute('BEGIN IMMEDIATE')
+                check_tags(c, tag_ids)
                 c.execute('INSERT INTO entries VALUES(?,?,?,?,?)',(eid,u['id'],day,body.strip(),time.time()))
                 c.executemany('INSERT INTO media VALUES(?,?,?,?,?,?)',rows)
+                c.executemany('INSERT INTO entry_tags VALUES(?,?)', [(eid,tid) for tid in tag_ids])
         return {'id':eid}
     except BaseException:
         for p in paths:
@@ -276,6 +335,8 @@ async def edit_entry(eid: str, request: Request):
             raise ValueError()
     except (ValueError, TypeError):
         raise HTTPException(400, '编辑内容无效：请检查日期和文字（最多 5000 字）')
+    tag_ids = validate_tag_ids(payload['tag_ids']) if 'tag_ids' in payload else None
+    original_tags = validate_tag_ids(original.get('tag_ids')) if tag_ids is not None else None
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
         entry = c.execute('SELECT * FROM entries WHERE id=?', (eid,)).fetchone()
@@ -285,9 +346,17 @@ async def edit_entry(eid: str, request: Request):
             raise HTTPException(403, '只能编辑自己发布的记录')
         if any(entry[k] != original[k] for k in ('day', 'body')):
             raise HTTPException(409, '这条记录已在其他页面修改，请保留草稿，关闭并刷新后重新编辑')
+        if tag_ids is not None:
+            current_tags = {r['tag_id'] for r in c.execute('SELECT tag_id FROM entry_tags WHERE entry_id=?', (eid,))}
+            if current_tags != set(original_tags):
+                raise HTTPException(409, '标签已在其他页面修改，请保留草稿，关闭并刷新后重新编辑')
+            check_tags(c, tag_ids)
         if not body.strip() and not c.execute('SELECT 1 FROM media WHERE entry_id=?', (eid,)).fetchone():
             raise HTTPException(400, '没有附件的记录不能清空文字')
         c.execute('UPDATE entries SET day=?,body=? WHERE id=?', (day, body.strip(), eid))
+        if tag_ids is not None:
+            c.execute('DELETE FROM entry_tags WHERE entry_id=?', (eid,))
+            c.executemany('INSERT INTO entry_tags VALUES(?,?)', [(eid,tid) for tid in tag_ids])
     return {'ok': True, 'id': eid, 'day': day}
 
 @app.delete('/api/entries/{eid}')
