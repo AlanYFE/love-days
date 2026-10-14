@@ -5,6 +5,7 @@ services:
     environment:
       PUBLIC_URL: https://${DOMAIN:?Please configure DOMAIN in .env}
       DATA_DIR: /app/data
+      TENCENT_MAP_KEY: ${TENCENT_MAP_KEY:-}
     volumes:
       - ./data:/app/data
     expose:

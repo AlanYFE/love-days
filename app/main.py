@@ -1,3 +1,4 @@
+import math
 import asyncio, hashlib, hmac, json, os, secrets, sqlite3, subprocess, time, warnings, unicodedata
 from contextlib import contextmanager
 from datetime import date
@@ -48,6 +49,7 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS tags(id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS entry_tags(entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id),PRIMARY KEY(entry_id,tag_id));
     CREATE INDEX IF NOT EXISTS entry_tags_tag ON entry_tags(tag_id,entry_id);
+    CREATE TABLE IF NOT EXISTS entry_locations(entry_id TEXT PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,payload TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS media_extras(media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,display TEXT,motion TEXT,companion TEXT);
     CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS comments_entry_created ON comments(entry_id,created);
@@ -89,7 +91,7 @@ async def security(request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'same-origin'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src https://apis.map.qq.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     if request.url.path.startswith(('/api/', '/media/')):
         response.headers['Cache-Control'] = 'no-store'
     return response
@@ -127,6 +129,44 @@ async def login(request: Request):
 @app.get('/api/me')
 def me(request: Request):
     return user(request)
+
+def validate_location(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(400, '地点格式无效')
+    result = {}
+    for field, limit in (('name',120),('city',80),('address',300)):
+        text = value.get(field, '')
+        if not isinstance(text, str) or len(text)>limit or any(unicodedata.category(ch)=='Cc' for ch in text):
+            raise HTTPException(400, '地点名称、城市或地址格式无效')
+        result[field] = text.strip()
+    if not result['name']:
+        raise HTTPException(400, '请填写地点名称')
+    lat, lng = value.get('lat'), value.get('lng')
+    if lat is None and lng is None:
+        result.update(lat=None,lng=None,source='manual',coordinate_system=None)
+    elif (type(lat) in (int,float) and type(lng) in (int,float)
+          and math.isfinite(lat) and math.isfinite(lng) and -90<=lat<=90 and -180<=lng<=180
+          and value.get('coordinate_system')=='gcj02' and value.get('source')=='tencent'):
+        result.update(lat=lat,lng=lng,source='tencent',coordinate_system='gcj02')
+    else:
+        raise HTTPException(400, '地点坐标无效，请重新选点')
+    return result
+
+def stored_location(c, eid):
+    row=c.execute('SELECT payload FROM entry_locations WHERE entry_id=?',(eid,)).fetchone()
+    return json.loads(row['payload']) if row else None
+
+def save_location(c, eid, location):
+    c.execute('DELETE FROM entry_locations WHERE entry_id=?',(eid,))
+    if location is not None:
+        c.execute('INSERT INTO entry_locations VALUES(?,?)',(eid,json.dumps(location,ensure_ascii=False)))
+
+@app.get('/api/map-config')
+def map_config(request: Request):
+    user(request)
+    return {'key':os.getenv('TENCENT_MAP_KEY','').strip(),'referer':'LoveDays'}
 
 @app.get('/api/anniversaries')
 def anniversaries(request: Request):
@@ -210,6 +250,7 @@ def records():
         comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id ORDER BY comments.created,comments.id')]
         entry_reactions = reaction_map(c, 'entry_reactions')
         comment_reactions = reaction_map(c, 'comment_reactions')
+        locations = {r['entry_id']:json.loads(r['payload']) for r in c.execute('SELECT * FROM entry_locations')}
         tagged = {}
         for row in c.execute('SELECT et.entry_id,t.id,t.name FROM entry_tags et JOIN tags t ON t.id=et.tag_id ORDER BY t.created,t.id'):
             tagged.setdefault(row['entry_id'], []).append({'id':row['id'],'name':row['name']})
@@ -231,6 +272,7 @@ def records():
         m['thumb'] = '/media/' + m['id'] + '/thumb' if m['thumb'] else None
         by_entry.setdefault(m.pop('entry_id'), []).append(m)
     for e in entries:
+        e['location'] = locations.get(e['id'])
         e['tags'] = tagged.get(e['id'], [])
         e['media'] = by_entry.get(e['id'], [])
         e['comments'] = by_comment_entry.get(e['id'], [])
@@ -274,7 +316,7 @@ async def create(request: Request):
     u = user(request)  # Authenticate before parsing large multipart bodies.
     paths = []
     try:
-        async with request.form(max_files=24, max_fields=4, max_part_size=64*1024) as form:
+        async with request.form(max_files=24, max_fields=5, max_part_size=64*1024) as form:
             day = form.get('day','')
             body = form.get('body','')
             try:
@@ -288,6 +330,10 @@ async def create(request: Request):
                 raise HTTPException(400, '标签格式无效')
             with db() as c:
                 check_tags(c, tag_ids)
+            try:
+                location=validate_location(json.loads(form.get('location','null')))
+            except (ValueError,TypeError):
+                raise HTTPException(400,'地点格式无效')
             files = form.getlist('files')
             if len(files) > 12:
                 raise HTTPException(400, '每条记录最多 12 个附件')
@@ -389,6 +435,7 @@ async def create(request: Request):
                 c.execute('BEGIN IMMEDIATE')
                 check_tags(c, tag_ids)
                 c.execute('INSERT INTO entries VALUES(?,?,?,?,?)',(eid,u['id'],day,body.strip(),time.time()))
+                save_location(c,eid,location)
                 c.executemany('INSERT INTO media VALUES(?,?,?,?,?,?)',rows)
                 c.executemany('INSERT INTO media_extras VALUES(?,?,?,?)',extra_rows)
                 c.executemany('INSERT INTO entry_tags VALUES(?,?)', [(eid,tid) for tid in tag_ids])
@@ -418,6 +465,11 @@ async def edit_entry(eid: str, request: Request):
         raise HTTPException(400, '编辑内容无效：请检查日期和文字（最多 5000 字）')
     tag_ids = validate_tag_ids(payload['tag_ids']) if 'tag_ids' in payload else None
     original_tags = validate_tag_ids(original.get('tag_ids')) if tag_ids is not None else None
+    change_location = 'location' in payload
+    location = validate_location(payload['location']) if change_location else None
+    if change_location and 'location' not in original:
+        raise HTTPException(400,'缺少原始地点，请刷新后重试')
+    original_location=validate_location(original['location']) if change_location else None
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
         entry = c.execute('SELECT * FROM entries WHERE id=?', (eid,)).fetchone()
@@ -427,6 +479,8 @@ async def edit_entry(eid: str, request: Request):
             raise HTTPException(403, '只能编辑自己发布的记录')
         if any(entry[k] != original[k] for k in ('day', 'body')):
             raise HTTPException(409, '这条记录已在其他页面修改，请保留草稿，关闭并刷新后重新编辑')
+        if change_location and stored_location(c,eid)!=original_location:
+            raise HTTPException(409,'地点已在其他页面修改，请保留草稿，关闭并刷新后重新编辑')
         if tag_ids is not None:
             current_tags = {r['tag_id'] for r in c.execute('SELECT tag_id FROM entry_tags WHERE entry_id=?', (eid,))}
             if current_tags != set(original_tags):
@@ -434,6 +488,8 @@ async def edit_entry(eid: str, request: Request):
             check_tags(c, tag_ids)
         if not body.strip() and not c.execute('SELECT 1 FROM media WHERE entry_id=?', (eid,)).fetchone():
             raise HTTPException(400, '没有附件的记录不能清空文字')
+        if change_location:
+            save_location(c,eid,location)
         c.execute('UPDATE entries SET day=?,body=? WHERE id=?', (day, body.strip(), eid))
         if tag_ids is not None:
             c.execute('DELETE FROM entry_tags WHERE entry_id=?', (eid,))
