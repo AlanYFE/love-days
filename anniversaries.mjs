@@ -23,9 +23,9 @@ export function eventsForYear(config,year){
   const halfDay=half.toISOString().slice(0,10);
   if(Number(halfDay.slice(0,4))===year)add(halfDay,years?`在一起 ${years} 年半`:'在一起半年','love');
   const from=`${year}-01-01`,to=`${year}-12-31`;
-  const first=Math.max(100,Math.ceil((daysBetween(start,from)+1)/100)*100);
-  for(let n=first;n<=daysBetween(start,to)+1;n+=100){
-   const day=new Date((ordinal(start)+n-1)*DAY).toISOString().slice(0,10);
+  const first=Math.max(100,Math.ceil(daysBetween(start,from)/100)*100);
+  for(let n=first;n<=daysBetween(start,to);n+=100){
+   const day=new Date((ordinal(start)+n)*DAY).toISOString().slice(0,10);
    add(day,`在一起第 ${n} 天`,'milestone');
   }
  }
