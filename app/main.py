@@ -91,7 +91,7 @@ async def security(request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'same-origin'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src https://apis.map.qq.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src https://apis.map.qq.com https://mapapi.qq.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     if request.url.path.startswith(('/api/', '/media/')):
         response.headers['Cache-Control'] = 'no-store'
     return response

@@ -13,7 +13,7 @@ function MapPicker({config,value,onSelect,onClose}){
  const [waiting,setWaiting]=useState(true),[error,setError]=useState('');
  useEffect(()=>{const node=dialog.current,previous=document.activeElement,overflow=document.body.style.overflow;node.showModal();document.body.style.overflow='hidden';const timer=timerRef.current=setTimeout(()=>setError('地图加载较慢或服务不可用，可以关闭后手动填写地点。'),12000);return()=>{clearTimeout(timer);node.close();document.body.style.overflow=overflow;previous?.isConnected&&previous.focus({preventScroll:true})}},[]);
  useEffect(()=>{function receive(event){
-  if(event.origin!=='https://apis.map.qq.com'||event.source!==frame.current?.contentWindow)return;
+  if(!['https://apis.map.qq.com','https://mapapi.qq.com'].includes(event.origin)||event.source!==frame.current?.contentWindow)return;
   const d=event.data;if(!d||d.module!=='locationPicker')return;
   const lat=d.latlng?.lat,lng=d.latlng?.lng;
   if(typeof lat!=='number'||typeof lng!=='number'||!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180||typeof d.poiname!=='string'||!d.poiname.trim()){setError('地图返回的地点不完整，请重新选择。');return}
@@ -21,7 +21,7 @@ function MapPicker({config,value,onSelect,onClose}){
  }window.addEventListener('message',receive);return()=>window.removeEventListener('message',receive)},[onSelect]);
  const params=new URLSearchParams({search:'1',type:'1',key:config.key,referer:config.referer,coordtype:'5'});
  if(value?.lat!=null)params.set('coord',`${value.lat},${value.lng}`);
- return createPortal(<dialog ref={dialog} className="location-dialog" aria-label="选择帖子地点" onCancel={e=>{e.preventDefault();e.stopPropagation();onClose()}}><div className="detail-title"><h2>选择地点</h2><button type="button" onClick={onClose} aria-label="关闭地图">×</button></div><p className="hint">搜索地点或拖动地图后确认。定位不可用时仍可搜索；关闭地图会保留帖子草稿。</p>{waiting&&<p role="status" className="hint">正在打开腾讯地图…</p>}{error&&<p className="hint" role="status">{error}</p>}<iframe ref={frame} title="腾讯地图选点" src={'https://apis.map.qq.com/tools/locpicker?'+params} referrerPolicy="strict-origin-when-cross-origin" allow="geolocation https://apis.map.qq.com" onLoad={()=>{setWaiting(false);clearTimeout(timerRef.current)}}/><button type="button" className="textbtn" onClick={onClose}>关闭，改为手动填写</button></dialog>,document.body);
+ return createPortal(<dialog ref={dialog} className="location-dialog" aria-label="选择帖子地点" onCancel={e=>{e.preventDefault();e.stopPropagation();onClose()}}><div className="detail-title"><h2>选择地点</h2><button type="button" onClick={onClose} aria-label="关闭地图">×</button></div><p className="hint">搜索地点或拖动地图后确认。定位不可用时仍可搜索；关闭地图会保留帖子草稿。</p>{waiting&&<p role="status" className="hint">正在打开腾讯地图…</p>}{error&&<p className="hint" role="status">{error}</p>}<iframe ref={frame} title="腾讯地图选点" src={'https://apis.map.qq.com/tools/locpicker?'+params} referrerPolicy="strict-origin-when-cross-origin" allow="geolocation https://apis.map.qq.com https://mapapi.qq.com" onLoad={()=>{setWaiting(false);clearTimeout(timerRef.current)}}/><button type="button" className="textbtn" onClick={onClose}>关闭，改为手动填写</button></dialog>,document.body);
 }
 export default function LocationPicker({value,onChange,disabled,request}){
  const [config,setConfig]=useState(null),[open,setOpen]=useState(false),[error,setError]=useState('');
