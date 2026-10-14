@@ -49,6 +49,17 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS tags(id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS entry_tags(entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id),PRIMARY KEY(entry_id,tag_id));
     CREATE INDEX IF NOT EXISTS entry_tags_tag ON entry_tags(tag_id,entry_id);
+    CREATE TABLE IF NOT EXISTS activities(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        actor_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('post','comment')),
+        entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+        comment_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+        preview TEXT NOT NULL,created REAL NOT NULL,read_at REAL
+    );
+    CREATE INDEX IF NOT EXISTS activities_recipient_id ON activities(recipient_id,id);
+    CREATE INDEX IF NOT EXISTS activities_unread ON activities(recipient_id,read_at);
     CREATE TABLE IF NOT EXISTS entry_locations(entry_id TEXT PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,payload TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS media_extras(media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,display TEXT,motion TEXT,companion TEXT);
     CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
@@ -162,6 +173,49 @@ def save_location(c, eid, location):
     c.execute('DELETE FROM entry_locations WHERE entry_id=?',(eid,))
     if location is not None:
         c.execute('INSERT INTO entry_locations VALUES(?,?)',(eid,json.dumps(location,ensure_ascii=False)))
+
+def add_activity(c, actor_id, kind, eid, preview, comment_id=None):
+    # Run in the same transaction as publication, so failures create no ghost alerts.
+    created=time.time()
+    for row in c.execute('SELECT id FROM users WHERE id<>?',(actor_id,)).fetchall():
+        c.execute('INSERT INTO activities(recipient_id,actor_id,kind,entry_id,comment_id,preview,created) VALUES(?,?,?,?,?,?,?)',
+                  (row['id'],actor_id,kind,eid,comment_id,preview[:160],created))
+
+@app.get('/api/activities')
+def activities(request: Request, before: int = 0):
+    u=user(request)
+    if before<0 or before>9223372036854775807:
+        raise HTTPException(400,'分页参数无效')
+    with db() as c:
+        c.execute('BEGIN')
+        summary=c.execute('SELECT COALESCE(MAX(id),0) AS latest_id,COUNT(CASE WHEN read_at IS NULL THEN 1 END) AS unread FROM activities WHERE recipient_id=?',(u['id'],)).fetchone()
+        rows=c.execute("""SELECT a.*,u.name AS actor,e.day FROM activities a
+            JOIN users u ON u.id=a.actor_id JOIN entries e ON e.id=a.entry_id
+            WHERE a.recipient_id=? AND (?=0 OR a.id<?) ORDER BY a.id DESC LIMIT 51""",(u['id'],before,before)).fetchall()
+        items=[{k:r[k] for k in ('id','kind','entry_id','comment_id','preview','created','read_at','actor','day')} for r in rows[:50]]
+    return {'items':items,'unread':summary['unread'],'latest_id':summary['latest_id'],
+            'next_before':items[-1]['id'] if len(rows)>50 else None}
+
+@app.post('/api/activities/read')
+async def read_activities(request: Request):
+    u=user(request)
+    try:
+        payload=await request.json()
+        if not isinstance(payload,dict) or set(payload) not in ({'id'},{'through'}):
+            raise ValueError()
+        key=next(iter(payload));value=payload[key]
+        if type(value) is not int or not 0<=value<=9223372036854775807:
+            raise ValueError()
+    except (ValueError,TypeError):
+        raise HTTPException(400,'已读参数无效')
+    with db() as c:
+        if key=='id':
+            if not c.execute('SELECT 1 FROM activities WHERE id=? AND recipient_id=?',(value,u['id'])).fetchone():
+                raise HTTPException(404,'动态不存在')
+            c.execute('UPDATE activities SET read_at=? WHERE id=? AND recipient_id=? AND read_at IS NULL',(time.time(),value,u['id']))
+        else:
+            c.execute('UPDATE activities SET read_at=? WHERE recipient_id=? AND id<=? AND read_at IS NULL',(time.time(),u['id'],value))
+    return {'ok':True}
 
 @app.get('/api/map-config')
 def map_config(request: Request):
@@ -435,6 +489,7 @@ async def create(request: Request):
                 c.execute('BEGIN IMMEDIATE')
                 check_tags(c, tag_ids)
                 c.execute('INSERT INTO entries VALUES(?,?,?,?,?)',(eid,u['id'],day,body.strip(),time.time()))
+                add_activity(c,u['id'],'post',eid,body.strip() or '发布了照片或视频')
                 save_location(c,eid,location)
                 c.executemany('INSERT INTO media VALUES(?,?,?,?,?,?)',rows)
                 c.executemany('INSERT INTO media_extras VALUES(?,?,?,?)',extra_rows)
@@ -540,6 +595,7 @@ async def add_comment(eid: str, request: Request):
         c.execute('INSERT INTO comments VALUES(?,?,?,?,?)',
                   (comment['id'], eid, u['id'], comment['body'], comment['created']))
         c.executemany('INSERT INTO comment_emojis VALUES(?,?,?)', [(comment['id'], i, e) for i,e in enumerate(emoji_ids)])
+        add_activity(c,u['id'],'comment',eid,comment['body'] or '发送了表情留言',comment['id'])
     return comment
 
 @app.delete('/api/comments/{cid}')
