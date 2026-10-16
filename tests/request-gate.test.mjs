@@ -12,3 +12,11 @@ test('logout or account switch invalidates outstanding responses',()=>{
  assert.equal(old(),false);const current=gate.begin();assert.equal(current(),true);
  gate.invalidate();assert.equal(current(),false);
 });
+
+test('changing days invalidates results even before the next day request begins',async()=>{
+ const gate=createRequestGate();let shown=null,resolve;
+ const old=gate.begin();const response=new Promise(r=>resolve=r).then(v=>{if(old())shown=v});
+ gate.invalidate(); // user selects another day before its effect starts
+ resolve('previous day');await response;assert.equal(shown,null);
+ const next=gate.begin();if(next())shown='selected day';assert.equal(shown,'selected day');
+});

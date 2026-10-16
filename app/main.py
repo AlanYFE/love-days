@@ -63,6 +63,8 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS entry_locations(entry_id TEXT PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,payload TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS media_extras(media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,display TEXT,motion TEXT,companion TEXT);
     CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
+    CREATE INDEX IF NOT EXISTS entries_day_created ON entries(day,created);
+    CREATE INDEX IF NOT EXISTS media_entry ON media(entry_id);
     CREATE INDEX IF NOT EXISTS comments_entry_created ON comments(entry_id,created);
     CREATE TABLE IF NOT EXISTS emojis(id TEXT PRIMARY KEY,name TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),mime TEXT NOT NULL,created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS comment_emojis(comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,position INTEGER NOT NULL,emoji_id TEXT NOT NULL REFERENCES emojis(id),PRIMARY KEY(comment_id,position));
@@ -243,10 +245,11 @@ def emoji_data(row):
     result['url'] = '/api/emojis/' + result['id'] + '/image'
     return result
 
-def reaction_map(c, table):
+def reaction_map(c, table, scope=None):
     # table is an internal constant, never a user-supplied SQL identifier.
     groups = {}
-    for row in c.execute(f'SELECT r.target_id,r.user_id,e.id,e.name FROM {table} r JOIN emojis e ON e.id=r.emoji_id ORDER BY e.created,e.id,r.user_id'):
+    where = f' WHERE r.target_id IN ({scope})' if scope else ''
+    for row in c.execute(f'SELECT r.target_id,r.user_id,e.id,e.name FROM {table} r JOIN emojis e ON e.id=r.emoji_id{where} ORDER BY e.created,e.id,r.user_id'):
         group = groups.setdefault(row['target_id'], {})
         reaction = group.setdefault(row['id'], {'emoji':emoji_data({'id':row['id'],'name':row['name']}),'user_ids':[],'count':0})
         reaction['user_ids'].append(row['user_id'])
@@ -296,20 +299,26 @@ async def create_tag(request: Request):
         c.execute('INSERT INTO tags VALUES(?,?,?,?,?)', (tag['id'],name,name.casefold(),u['id'],time.time()))
     return JSONResponse(tag, status_code=201)
 
-def records():
+def records(day=None):
     with db() as c:
-        entries = [dict(x) for x in c.execute('SELECT entries.*,users.name AS author FROM entries JOIN users ON users.id=entries.user_id ORDER BY day DESC,created DESC')]
-        media = [dict(x) for x in c.execute('SELECT id,entry_id,kind,thumb FROM media')]
-        extras = {r['media_id']:dict(r) for r in c.execute('SELECT * FROM media_extras')}
-        comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id ORDER BY comments.created,comments.id')]
-        entry_reactions = reaction_map(c, 'entry_reactions')
-        comment_reactions = reaction_map(c, 'comment_reactions')
-        locations = {r['entry_id']:json.loads(r['payload']) for r in c.execute('SELECT * FROM entry_locations')}
+        c.execute('BEGIN')
+        c.execute('CREATE TEMP TABLE record_scope(id TEXT PRIMARY KEY)')
+        if day is None:
+            c.execute('INSERT INTO record_scope SELECT id FROM entries')
+        else:
+            c.execute('INSERT INTO record_scope SELECT id FROM entries WHERE day=?', (day,))
+        entries = [dict(x) for x in c.execute('SELECT entries.*,users.name AS author FROM entries JOIN users ON users.id=entries.user_id WHERE entries.id IN (SELECT id FROM record_scope) ORDER BY day DESC,created DESC,id DESC')]
+        media = [dict(x) for x in c.execute('SELECT id,entry_id,kind,thumb FROM media WHERE entry_id IN (SELECT id FROM record_scope) ORDER BY rowid')]
+        extras = {r['media_id']:dict(r) for r in c.execute('SELECT * FROM media_extras WHERE media_id IN (SELECT id FROM media WHERE entry_id IN (SELECT id FROM record_scope))')}
+        comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id WHERE comments.entry_id IN (SELECT id FROM record_scope) ORDER BY comments.created,comments.id')]
+        entry_reactions = reaction_map(c, 'entry_reactions', 'SELECT id FROM record_scope')
+        comment_reactions = reaction_map(c, 'comment_reactions', 'SELECT id FROM comments WHERE entry_id IN (SELECT id FROM record_scope)')
+        locations = {r['entry_id']:json.loads(r['payload']) for r in c.execute('SELECT * FROM entry_locations WHERE entry_id IN (SELECT id FROM record_scope)')}
         tagged = {}
-        for row in c.execute('SELECT et.entry_id,t.id,t.name FROM entry_tags et JOIN tags t ON t.id=et.tag_id ORDER BY t.created,t.id'):
+        for row in c.execute('SELECT et.entry_id,t.id,t.name FROM entry_tags et JOIN tags t ON t.id=et.tag_id WHERE et.entry_id IN (SELECT id FROM record_scope) ORDER BY t.created,t.id'):
             tagged.setdefault(row['entry_id'], []).append({'id':row['id'],'name':row['name']})
         attached = {}
-        for row in c.execute('SELECT ce.comment_id,e.id,e.name FROM comment_emojis ce JOIN emojis e ON e.id=ce.emoji_id ORDER BY ce.comment_id,ce.position'):
+        for row in c.execute('SELECT ce.comment_id,e.id,e.name FROM comment_emojis ce JOIN emojis e ON e.id=ce.emoji_id WHERE ce.comment_id IN (SELECT id FROM comments WHERE entry_id IN (SELECT id FROM record_scope)) ORDER BY ce.comment_id,ce.position'):
             attached.setdefault(row['comment_id'], []).append(emoji_data({'id':row['id'],'name':row['name']}))
     by_comment_entry = {}
     for comment in comments:
@@ -334,9 +343,47 @@ def records():
     return entries
 
 @app.get('/api/entries')
-def entries(request: Request):
+def entries(request: Request, day: str | None = None):
     user(request)
-    return records()
+    if day is not None:
+        try:
+            parsed = date.fromisoformat(day)
+            if parsed.isoformat() != day or not 1900 <= parsed.year <= 2200:
+                raise ValueError()
+        except ValueError:
+            raise HTTPException(400, '日期格式不正确')
+    return records(day)
+
+@app.get('/api/calendar')
+def calendar_summary(request: Request):
+    user(request)
+    with db() as c:
+        c.execute('BEGIN')
+        days = [dict(r) for r in c.execute("""
+            WITH summary AS (SELECT day, COUNT(*) AS count,
+              (SELECT substr(e.body,1,120) FROM entries e WHERE e.day=entries.day
+               ORDER BY e.created DESC,e.id DESC LIMIT 1) AS excerpt,
+              (SELECT m.id FROM entries e JOIN media m ON m.entry_id=e.id
+               WHERE e.day=entries.day AND m.thumb IS NOT NULL AND m.thumb!=''
+               ORDER BY e.created DESC,e.id DESC,m.rowid LIMIT 1) AS cover_id
+            FROM entries GROUP BY day)
+            SELECT summary.*, media.kind AS cover_kind FROM summary
+            LEFT JOIN media ON media.id=summary.cover_id ORDER BY summary.day
+        """)]
+        media_count = c.execute('SELECT COUNT(*) FROM media').fetchone()[0]
+    for d in days:
+        mid, kind = d.pop('cover_id'), d.pop('cover_kind')
+        d['cover'] = {'thumb':f'/media/{mid}/thumb', 'kind':kind} if mid else None
+    return {'days':days, 'stats':{'days':len(days), 'entries':sum(d['count'] for d in days), 'media':media_count}}
+
+@app.get('/api/entries/{eid}')
+def entry_location(request: Request, eid: str):
+    user(request)
+    with db() as c:
+        row = c.execute('SELECT id,day FROM entries WHERE id=?', (eid,)).fetchone()
+    if not row:
+        raise HTTPException(404, '这条帖子已删除')
+    return dict(row)
 
 @app.get('/api/export')
 def export(request: Request):
