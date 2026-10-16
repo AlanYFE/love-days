@@ -316,3 +316,25 @@ def test_anniversaries_private():
     data=client().get('/api/anniversaries').json()
     assert data['together']=='2026-03-21'
     assert data['birthdays']==[{'name':'飞飞','day':'2000-09-22'},{'name':'巧巧','day':'2000-08-25'}]
+
+def test_creation_date_bounds_and_video_local_protocols(monkeypatch):
+    from app import main
+    with db() as c:
+        c.execute('DELETE FROM attempts')
+    a=client()
+    before=len(a.get('/api/entries').json())
+    for day in ('1899-12-31','2201-01-01','2026-02-30'):
+        assert a.post('/api/entries',data={'day':day,'body':'invalid'},headers=HEADERS).status_code==400
+    assert len(a.get('/api/entries').json())==before
+    for day in ('1900-01-01','2200-12-31'):
+        assert a.post('/api/entries',data={'day':day,'body':'boundary'},headers=HEADERS).status_code==200
+    commands=[]
+    def fake_run(args,**kwargs):
+        commands.append(args)
+        class Result: stdout='{"streams":[{"codec_name":"h264"}]}'
+        return Result()
+    monkeypatch.setattr(main.subprocess,'run',fake_run)
+    assert main.validate_video(MEDIA/'test')
+    assert main.video_thumb(MEDIA/'test',MEDIA/'thumb')
+    for command in commands:
+        assert command[command.index('-protocol_whitelist')+1]=='file,pipe'

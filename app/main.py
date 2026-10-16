@@ -351,7 +351,7 @@ def make_image(source, dest):
 
 def validate_video(source):
     try:
-        result = subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name','-of','json',str(source)], check=True, capture_output=True, timeout=15)
+        result = subprocess.run(['ffprobe','-v','error','-protocol_whitelist','file,pipe','-select_streams','v:0','-show_entries','stream=codec_name','-of','json',str(source)], check=True, capture_output=True, timeout=15)
         streams = json.loads(result.stdout).get('streams', [])
         return bool(streams and streams[0].get('codec_name') in ('h264', 'hevc', 'mpeg4', 'av1', 'vp9'))
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -359,7 +359,7 @@ def validate_video(source):
 
 def video_thumb(source, dest):
     try:
-        subprocess.run(['ffmpeg','-nostdin','-v','error','-i',str(source),'-frames:v','1','-vf','scale=640:-2','-y',str(dest)], check=True, capture_output=True, timeout=25)
+        subprocess.run(['ffmpeg','-nostdin','-v','error','-protocol_whitelist','file,pipe','-i',str(source),'-frames:v','1','-vf','scale=640:-2','-y',str(dest)], check=True, capture_output=True, timeout=25)
         return True
     except (OSError, subprocess.SubprocessError):
         dest.unlink(missing_ok=True)
@@ -374,7 +374,8 @@ async def create(request: Request):
             day = form.get('day','')
             body = form.get('body','')
             try:
-                if date.fromisoformat(day).isoformat()!=day or len(body)>5000:
+                if (not isinstance(day,str) or not isinstance(body,str) or len(body)>5000
+                    or date.fromisoformat(day).isoformat()!=day or not 1900<=date.fromisoformat(day).year<=2200):
                     raise ValueError()
             except (ValueError, TypeError):
                 raise HTTPException(400,'日期无效，或文字超过 5000 字')
