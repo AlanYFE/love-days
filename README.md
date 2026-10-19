@@ -247,3 +247,32 @@ sh scripts/backup.sh
 验证：`tests/test_daily.py` 覆盖按日隔离、完整嵌套内容、鉴权、非法日期、
 编辑改日后的统计/定位、删除和全量导出；365 天长正文及评论的模拟数据用于比较接口返回字节数，
 不代表真实网络加载时间，也不包括图片视频文件流量。
+
+### 代码结构与修改入口
+
+后端 `app/main.py` 负责组装 FastAPI、全站安全中间件和静态文件；功能模块使用
+`APIRouter`，不得反向导入 `main.py`。共同的数据库连接、建表和配置在 `app/core.py`，
+避免功能模块互相依赖应用入口。原有启动命令 `uvicorn app.main:app` 不变。
+
+| 功能 | 前端入口 | 后端入口 |
+| --- | --- | --- |
+| 页面状态、日历布局、发布窗口 | `frontend.jsx` | — |
+| 请求及错误处理 | `api.mjs` | `app/main.py`（全站安全中间件） |
+| 登录与会话 | `frontend.jsx` | `app/auth.py` |
+| 日历概览、按日查询、完整导出 | `frontend.jsx`、`month-selector.jsx` | `app/records.py` |
+| 帖子展示、编辑、发布和删除 | `entry-card.jsx`、`edit-entry.jsx`、`frontend.jsx` | `app/entries.py` |
+| 评论 | `comments.jsx` | `app/comments.py` |
+| 表情库与回应 | `emoji-picker.jsx` | `app/emojis.py` |
+| 照片预览、媒体读取与实况 | `photo-viewer.jsx`、`live-photos.jsx` | `app/media.py`、`app/live.py` |
+| 标签 | `tags.jsx` | `app/tags.py` |
+| 地点 | `locations.jsx` | `app/locations.py` |
+| 动态提醒 | `activities.jsx` | `app/activities.py` |
+| 纪念日计算与配置 | `anniversaries.mjs` | `app/records.py` |
+
+依赖方向：功能组件调用共享 API；页面入口组合组件。后端路由使用认证和数据库模块，
+帖子/评论发布在原有事务中调用动态提醒逻辑。主文件保留早期维护命令使用的少量导入兼容，
+新增代码应直接从所属模块导入；测试替换依赖也应在所属模块进行。
+
+此次整理不改变数据库结构、接口地址、权限或页面流程，不需要数据迁移。
+新增前端模块仍由现有 `npm run build` 打包为同一个 `app/static/app.js`；
+请同时提交源文件和生成的 bundle。Docker 继续复制整个 `app` 目录，无需改启动方式。

@@ -1,0 +1,1 @@
+export async function api(path,options={}){const r=await fetch(path,{...options,headers:{'X-Blue-Request':'1',...options.headers}});let data;try{data=await r.json()}catch{throw Error('服务暂时不可用，请稍后重试')}if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'请求失败，请检查输入');return data}

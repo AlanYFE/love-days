@@ -299,7 +299,7 @@ def test_tag_limits_and_invalid_create_leaves_no_media():
     assert next(e for e in a.get('/api/entries').json() if e['id']==legacy)['tags']==[]
 
 def test_full_tag_library_still_reuses_existing_tag(monkeypatch):
-    import app.main as main
+    import app.tags as main
     with db() as c:
         c.execute('DELETE FROM attempts')
     a=client()
@@ -318,7 +318,7 @@ def test_anniversaries_private():
     assert data['birthdays']==[{'name':'飞飞','day':'2000-09-22'},{'name':'巧巧','day':'2000-08-25'}]
 
 def test_creation_date_bounds_and_video_local_protocols(monkeypatch):
-    from app import main
+    from app import media as main
     with db() as c:
         c.execute('DELETE FROM attempts')
     a=client()
