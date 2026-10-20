@@ -39,6 +39,13 @@ def db():
 with db() as c:
     c.executescript('''
     PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS monthly_memories(
+        id TEXT PRIMARY KEY, month TEXT NOT NULL, payload TEXT NOT NULL,
+        source_hash TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT NOT NULL REFERENCES users(id), created REAL NOT NULL, updated REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS monthly_memories_month ON monthly_memories(month,updated);
+
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,salt TEXT NOT NULL,password TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id),expires REAL);
     CREATE TABLE IF NOT EXISTS attempts(ip TEXT,t REAL);

@@ -9,11 +9,13 @@ from .emojis import emoji_data, reaction_map
 
 router = APIRouter()
 
-def records(day=None):
+def records(day=None, month=None):
     with db() as c:
         c.execute('BEGIN')
         c.execute('CREATE TEMP TABLE record_scope(id TEXT PRIMARY KEY)')
-        if day is None:
+        if month is not None:
+            c.execute('INSERT INTO record_scope SELECT id FROM entries WHERE day>=? AND day<=?', (month+'-01', month+'-31'))
+        elif day is None:
             c.execute('INSERT INTO record_scope SELECT id FROM entries')
         else:
             c.execute('INSERT INTO record_scope SELECT id FROM entries WHERE day=?', (day,))
