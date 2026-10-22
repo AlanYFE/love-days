@@ -24,7 +24,12 @@ export function Comments({entry, me, refresh}) {
  return <section className="comments" aria-label="帖子评论">
   <h3>留言 <span>{comments.length}</span></h3>
   {!comments.length&&<p className="comment-empty">给这个小日子留句话吧。</p>}
-  <div className="comment-list">{comments.map(c=><div className="comment" key={c.id} id={'comment-'+c.id} tabIndex={-1}>
+  <div className="comment-list">{comments.length>2&&<details className="older-comments"><summary>查看更早的 {comments.length-2} 条留言</summary>{comments.slice(0,-2).map(c=><div className="comment" key={c.id} id={'comment-'+c.id} tabIndex={-1}>
+   <div className="comment-meta"><strong>{c.author}</strong><time dateTime={new Date(c.created*1000).toISOString()}>{new Date(c.created*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</time>{c.user_id===me.id&&<button type="button" className="textbtn" disabled={busy} onClick={()=>remove(c)} aria-label={'删除'+c.author+'的这条评论'}>删除</button>}</div>
+   {c.body&&<p className="comment-body">{c.body}</p>}
+   {!!c.emojis?.length&&<div className="comment-stickers">{c.emojis.map((emoji,i)=><a key={i} href={emoji.url} target="_blank" rel="noreferrer"><img src={emoji.url} loading="lazy" alt={emoji.name} title={emoji.name}/></a>)}</div>}
+   <Reactions kind="comments" target={c} me={me} refresh={refresh}/>
+  </div>)}</details>}{comments.slice(-2).map(c=><div className="comment" key={c.id} id={'comment-'+c.id} tabIndex={-1}>
    <div className="comment-meta"><strong>{c.author}</strong><time dateTime={new Date(c.created*1000).toISOString()}>{new Date(c.created*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</time>{c.user_id===me.id&&<button type="button" className="textbtn" disabled={busy} onClick={()=>remove(c)} aria-label={'删除'+c.author+'的这条评论'}>删除</button>}</div>
    {c.body&&<p className="comment-body">{c.body}</p>}
    {!!c.emojis?.length&&<div className="comment-stickers">{c.emojis.map((emoji,i)=><a key={i} href={emoji.url} target="_blank" rel="noreferrer"><img src={emoji.url} loading="lazy" alt={emoji.name} title={emoji.name}/></a>)}</div>}
