@@ -1,0 +1,1 @@
+{"name":"dsh-lovedays-whale","version":"0.1.0","type":"module","main":"plugin.mjs","exports":{".":"./plugin.mjs"},"dsh":{"bundle":{"patch":"./cordis.patch.yml"}},"private":true}
