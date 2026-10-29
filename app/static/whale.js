@@ -27,7 +27,7 @@ async function refresh() {
       });
       $('messages').replaceChildren(...nodes); previous = fingerprint;
     }
-    $('status').textContent = data.enabled ? '消息发送后会排队，小鲸鱼需要一点时间回复。显示最近 100 条。' : '小鲸鱼尚未接入，暂时不能发送消息。';
+    $('status').textContent = data.enabled ? '消息发送后会排队，小铃需要一点时间回复。显示最近 100 条。' : '小铃尚未接入，暂时不能发送消息。';
   } catch(e) { $('status').textContent = e.message; }
   finally { busy = false; $('send').disabled = !ready || sending; }
 }

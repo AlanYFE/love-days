@@ -27,7 +27,7 @@ with db() as c:
 def agent(request):
     expected = os.getenv('WHALE_API_TOKEN', '')
     if len(expected) < 32:
-        raise HTTPException(503, '小鲸鱼尚未接入')
+        raise HTTPException(503, '小铃尚未接入')
     value = request.headers.get('authorization', '')
     supplied = value[7:] if value.startswith('Bearer ') else ''
     if not supplied or not hmac.compare_digest(supplied.encode(), expected.encode()):
@@ -51,7 +51,7 @@ async def payload(request):
 
 def message_rows(c, where='', args=(), limit=100):
     return [dict(r) for r in c.execute('''
-      SELECT m.id,m.user_id,COALESCE(u.name,'小鲸鱼') AS author,
+      SELECT m.id,m.user_id,COALESCE(u.name,'小铃') AS author,
         m.body,m.created,m.reply_to FROM whale_messages m
       LEFT JOIN users u ON u.id=m.user_id
     ''' + where + ' ORDER BY m.id DESC LIMIT ?', (*args, limit))][::-1]
@@ -74,7 +74,7 @@ def messages(request: Request):
 async def send(request: Request):
     u = user(request)
     if len(os.getenv('WHALE_API_TOKEN','')) < 32:
-        raise HTTPException(503, '小鲸鱼尚未接入')
+        raise HTTPException(503, '小铃尚未接入')
     p, body = await payload(request)
     client_id = p.get('client_id', '')
     if not isinstance(client_id, str) or not re.fullmatch(r'[a-zA-Z0-9-]{16,64}', client_id):
@@ -92,7 +92,7 @@ async def send(request: Request):
         pending = c.execute('''SELECT COUNT(*) FROM whale_messages m WHERE m.user_id IS NOT NULL
           AND NOT EXISTS(SELECT 1 FROM whale_messages r WHERE r.reply_to=m.id)''').fetchone()[0]
         if pending >= 20:
-            raise HTTPException(429, '小鲸鱼还有消息没回复，请稍后再发')
+            raise HTTPException(429, '小铃还有消息没回复，请稍后再发')
         mid = c.execute('INSERT INTO whale_messages(user_id,body,created,client_id) VALUES(?,?,?,?)',
                         (u['id'],body,now,client_id)).lastrowid
     return {'id':mid}

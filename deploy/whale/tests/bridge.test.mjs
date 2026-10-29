@@ -38,3 +38,30 @@ test('uncertain prompt failure does not immediately repeat a paid turn',async()=
     await poller.tick();await poller.tick();assert.equal(attempts,1);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('native deployment quotes paths and gives each message a distinct reply file',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"xiaoling's room "));
+  try {
+    const personaPath=path.join(dir,'persona.md');
+    fs.writeFileSync(personaPath,'你叫小铃。');
+    const prompts=[];
+    let id=51;
+    const poller=createPoller({
+      statePath:path.join(dir,'state.json'),cwd:dir,personaPath,
+      cliPath:path.join(dir,'cli.mjs'),nodePath:'/custom node/bin/node',
+      request:async()=>({messages:[{id:id++,body:'hello',author:'Joey'}]}),
+      controller:{create:async()=>{},prompt:async r=>prompts.push(r.content[0].text)},
+    });
+    await poller.tick();
+    fs.writeFileSync(personaPath,'你叫小铃，更新后的人设。');
+    await poller.tick();
+    assert.ok(prompts[0].startsWith('你叫小铃。'));
+    assert.ok(prompts[1].startsWith('你叫小铃，更新后的人设。'));
+    assert.ok(prompts[0].includes("'/custom node/bin/node'"));
+    assert.ok(prompts[0].includes("xiaoling'\\''s room"));
+    assert.ok(prompts[0].includes('reply-51.txt'));
+    assert.ok(prompts[1].includes('reply-52.txt'));
+    assert.ok(!prompts[0].includes('/opt/lovedays'));
+    assert.ok(!prompts[0].includes('/opt/dsh-bili-whale'));
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});

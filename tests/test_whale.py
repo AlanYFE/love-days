@@ -73,7 +73,7 @@ def test_shared_chat_idempotency_and_reply_identity():
     assert worker.post(f'/api/whale/agent/reply/{mid}',json={'body':'不能重复'},headers=AGENT).json()=={'id':rid,'already_replied':True}
     assert worker.get('/api/whale/agent/inbox',headers=AGENT).json()=={'messages':[]}
     response=b.get('/api/whale/messages').json()['messages'][-1]
-    assert response['user_id'] is None and response['author']=='小鲸鱼'
+    assert response['user_id'] is None and response['author']=='小铃'
     assert worker.post(f'/api/whale/agent/reply/{rid}',json={'body':'不能自循环'},headers=AGENT).status_code==404
     assert len(worker.get('/api/whale/agent/history',headers=AGENT).json()['messages'])==2
 
