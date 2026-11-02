@@ -1,0 +1,8 @@
+{
+  "night":{"windows":[{"start":"20:00","end":"23:00","wakes":1}],"skipChance":0.3,"minGapMin":60,"maxVideos":3},
+  "share":{"enabled":false},
+  "listen":{"comment":false,"dm":false,"live":false,"allDay":false},
+  "quota":{"shareDaily":0},
+  "notify":{"type":"none"},
+  "persona":{"name":"小鲸鱼","ownerTitle":"朋友","selfClaim":"我"}
+}

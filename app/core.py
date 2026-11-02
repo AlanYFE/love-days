@@ -77,3 +77,10 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS comment_reactions(target_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,emoji_id TEXT NOT NULL REFERENCES emojis(id),user_id TEXT NOT NULL REFERENCES users(id),PRIMARY KEY(target_id,emoji_id,user_id));
     ''')
 
+
+# One invitation per original entry, shared by both members and every worker.
+with db() as c:
+    c.execute('''CREATE TABLE IF NOT EXISTS whale_reads(
+        entry_id TEXT PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+        day TEXT NOT NULL, state TEXT NOT NULL, ticket TEXT, expires REAL,
+        reply TEXT, replied_at REAL)''')

@@ -1,0 +1,26 @@
+name: lovedays-whale
+services:
+  whale:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Asia/Shanghai
+      LOVEDAYS_URL: https://love.fefyjoey.xyz
+      WHALE_API_TOKEN: ${WHALE_API_TOKEN:?Set WHALE_API_TOKEN in .env}
+    ports:
+      - "127.0.0.1:3088:3080"
+    volumes:
+      - whale_home:/home/node
+    mem_limit: 1536m
+    cpus: 1.0
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  whale_home:

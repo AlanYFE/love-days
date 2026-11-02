@@ -1,5 +1,6 @@
 """Records feature: routes and supporting logic."""
 import json
+import time
 from datetime import date
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -23,6 +24,8 @@ def records(day=None, month=None):
         media = [dict(x) for x in c.execute('SELECT id,entry_id,kind,thumb FROM media WHERE entry_id IN (SELECT id FROM record_scope) ORDER BY rowid')]
         extras = {r['media_id']:dict(r) for r in c.execute('SELECT * FROM media_extras WHERE media_id IN (SELECT id FROM media WHERE entry_id IN (SELECT id FROM record_scope))')}
         comments = [dict(x) for x in c.execute('SELECT comments.*,users.name AS author FROM comments JOIN users ON users.id=comments.user_id WHERE comments.entry_id IN (SELECT id FROM record_scope) ORDER BY comments.created,comments.id')]
+        reads = {r['entry_id']: r for r in c.execute(
+            'SELECT * FROM whale_reads WHERE entry_id IN (SELECT id FROM record_scope)')}
         entry_reactions = reaction_map(c, 'entry_reactions', 'SELECT id FROM record_scope')
         comment_reactions = reaction_map(c, 'comment_reactions', 'SELECT id FROM comments WHERE entry_id IN (SELECT id FROM record_scope)')
         locations = {r['entry_id']:json.loads(r['payload']) for r in c.execute('SELECT * FROM entry_locations WHERE entry_id IN (SELECT id FROM record_scope)')}
@@ -51,6 +54,16 @@ def records(day=None, month=None):
         e['tags'] = tagged.get(e['id'], [])
         e['media'] = by_entry.get(e['id'], [])
         e['comments'] = by_comment_entry.get(e['id'], [])
+        read = reads.get(e['id'])
+        if read and read['state'] == 'done':
+            e['whale_state'] = 'done'
+            e['comments'].append({'id': 'whale-'+e['id'], 'user_id': None, 'author': '小铃 · AI',
+                                  'is_ai': True, 'entry_id': e['id'], 'body': read['reply'],
+                                  'created': read['replied_at'], 'emojis': [], 'reactions': []})
+            e['comments'].sort(key=lambda item: (item['created'], item['id']))
+        elif day is not None and read and read['day'] == e['day']:
+            expired = read['expires'] is not None and read['expires'] < time.time()
+            e['whale_state'] = 'failed' if expired else read['state']
         e['reactions'] = entry_reactions.get(e['id'], [])
     return entries
 
