@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from . import auth, activities, comments, emojis, entries, locations, media, records, tags, monthly, whale
+from . import auth, activities, comments, emojis, entries, locations, media, records, tags, monthly, whale, whale_reads
 from .core import ROOT, PUBLIC_URL, MAX_TOTAL
 # Preserve earlier imports used by tests and maintenance commands.
 from .core import db, MEDIA, EMOJI_DIR, MAX_EMOJI_BYTES
@@ -33,7 +33,7 @@ async def security(request, call_next):
     return response
 
 
-for feature in (auth, locations, activities, tags, records, entries, comments, emojis, media, monthly, whale):
+for feature in (auth, locations, activities, tags, records, entries, comments, emojis, media, monthly, whale, whale_reads):
     app.include_router(feature.router)
 
 app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')

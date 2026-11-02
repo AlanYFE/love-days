@@ -28,12 +28,12 @@ export function Comments({entry, me, refresh}) {
    <div className="comment-meta"><strong>{c.author}</strong><time dateTime={new Date(c.created*1000).toISOString()}>{new Date(c.created*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</time>{c.user_id===me.id&&<button type="button" className="textbtn" disabled={busy} onClick={()=>remove(c)} aria-label={'删除'+c.author+'的这条评论'}>删除</button>}</div>
    {c.body&&<p className="comment-body">{c.body}</p>}
    {!!c.emojis?.length&&<div className="comment-stickers">{c.emojis.map((emoji,i)=><a key={i} href={emoji.url} target="_blank" rel="noreferrer"><img src={emoji.url} loading="lazy" alt={emoji.name} title={emoji.name}/></a>)}</div>}
-   <Reactions kind="comments" target={c} me={me} refresh={refresh}/>
+   {!c.is_ai && <Reactions kind="comments" target={c} me={me} refresh={refresh}/>}
   </div>)}</details>}{comments.slice(-2).map(c=><div className="comment" key={c.id} id={'comment-'+c.id} tabIndex={-1}>
    <div className="comment-meta"><strong>{c.author}</strong><time dateTime={new Date(c.created*1000).toISOString()}>{new Date(c.created*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</time>{c.user_id===me.id&&<button type="button" className="textbtn" disabled={busy} onClick={()=>remove(c)} aria-label={'删除'+c.author+'的这条评论'}>删除</button>}</div>
    {c.body&&<p className="comment-body">{c.body}</p>}
    {!!c.emojis?.length&&<div className="comment-stickers">{c.emojis.map((emoji,i)=><a key={i} href={emoji.url} target="_blank" rel="noreferrer"><img src={emoji.url} loading="lazy" alt={emoji.name} title={emoji.name}/></a>)}</div>}
-   <Reactions kind="comments" target={c} me={me} refresh={refresh}/>
+   {!c.is_ai && <Reactions kind="comments" target={c} me={me} refresh={refresh}/>}
   </div>)}</div>
   <form className="comment-form" onSubmit={submit}>
    <textarea aria-label="评论内容" placeholder="想对你说……" rows="2" maxLength={1000} value={draft} disabled={busy} onChange={e=>setDraft(e.target.value)}/>

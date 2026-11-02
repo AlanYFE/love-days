@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {makeDayReader} from './day-reader.mjs';
 import {createClient} from './client.mjs';
 
 const moduleDir=path.dirname(fileURLToPath(import.meta.url));
@@ -54,7 +55,7 @@ export function createPoller({controller,request,statePath,cwd,now=Date.now,log=
           '该命令确认成功后才算回复完成。不要声称看过没有读取的帖子或视频。',
           JSON.stringify(message),
         ].join('\n');
-        await controller.prompt({sessionId:state.sessionId,requestId:'lovedays-'+message.id+'-'+day+'-'+(count+1),mode:'queue',content:[{type:'text',text}]});
+        await controller.prompt({sessionId:state.sessionId,requestId:'lovedays-'+message.id+'-'+day+'-'+(count+1),mode:'queue',content:[{type:'text',text}]},AbortSignal.timeout(90000));
       } catch(e) {log('Love Days 桥接暂未完成：'+e.message);}
       finally {busy=false;}
     },
@@ -67,9 +68,14 @@ export default {
     const home=process.env.DSH_HOME||path.join(os.homedir(),'.dsh');
     const cwd=path.join(home,'lovedays-work');fs.mkdirSync(cwd,{recursive:true});
     if(!process.env.LOVEDAYS_URL||!process.env.WHALE_API_TOKEN){console.warn('[lovedays] 缺少接入配置，未启动轮询');return;}
-    const personaPath=process.env.LOVEDAYS_PERSONA_FILE||path.join(moduleDir,'persona.md');
-    const poller=createPoller({controller:ctx.sessionController,request:createClient({baseUrl:process.env.LOVEDAYS_URL,token:process.env.WHALE_API_TOKEN}),statePath:path.join(home,'lovedays-session.json'),cwd,personaPath,log:console.warn});
-    const timer=setInterval(()=>poller.tick(),15000);timer.unref?.();poller.tick();
-    ctx.on('dispose',()=>{clearInterval(timer);poller.stop();});
+    const personaPath=process.env.LOVEDAYS_PERSONA_FILE||path.join(os.homedir(),'.bili-ai','persona.md');
+    const request=createClient({baseUrl:process.env.LOVEDAYS_URL,token:process.env.WHALE_API_TOKEN});
+    const tick=makeDayReader({request,controller:ctx.sessionController,cwd,personaPath,
+      cliPath:path.join(moduleDir,'cli.mjs')});
+    const chat=createPoller({controller:ctx.sessionController,request,cwd,personaPath,
+      statePath:path.join(home,'lovedays-session.json'),log:console.warn});
+    function poll() { void tick(); void chat.tick(); }
+    const timer=setInterval(poll,15000);timer.unref?.();poll();
+    ctx.on('dispose',()=>{clearInterval(timer);chat.stop();});
   },
 };
