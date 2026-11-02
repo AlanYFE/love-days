@@ -13,3 +13,12 @@ header{height:82px;max-width:1400px;margin:auto;padding:0 48px;border-bottom:1px
 @keyframes sheet-enter{from{transform:translateY(32px);opacity:.5}to{transform:translateY(0);opacity:1}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 @media(max-width:760px){.anniversary-heading{flex-direction:row;text-align:left;align-items:center}.anniversary-heading>span{text-align:right;max-width:100px;line-height:1.8}.anniversary-panel>.hint{display:none}.upcoming-days{margin-bottom:0}.intro{margin-bottom:18px}.intro-actions{margin-top:16px}}
+
+@media(max-width:760px){
+ .intro .mobile-journal-title{font-size:24px;margin:0}
+ .intro-actions{margin-top:10px}
+ .activity-summary{margin:0 0 14px;padding:5px 0}
+ .activity-summary>div:first-child p{display:none}
+ .activity-summary .emoji-trigger{min-height:44px}
+ .comment-form textarea{font-size:16px}
+}

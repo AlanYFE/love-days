@@ -1,25 +1,44 @@
-import React, {useState} from 'react';
+import React, {createContext,useContext,useState} from 'react';
 import {api} from './api.mjs';
 import {EmojiPicker,Reactions} from './emoji-picker.jsx';
 
+const DraftContext=createContext(null);
+const emptyDraft={body:'',emojis:[],sending:false,error:''};
+
+export function CommentDrafts({children}){
+ const [drafts,setDrafts]=useState(()=>new Map());
+ function update(id,patch){
+  setDrafts(previous=>{
+   const next=new Map(previous);
+   const draft={...(previous.get(id)||emptyDraft),...patch};
+   if(draft.body||draft.emojis.length||draft.sending||draft.error)next.set(id,draft);
+   else next.delete(id);
+   return next;
+  });
+ }
+ return <DraftContext.Provider value={{drafts,update}}>{children}</DraftContext.Provider>;
+}
+
 export function Comments({entry, me, refresh}) {
- const [draft,setDraft]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const [chosen,setChosen]=useState([]);
+ const {drafts,update}=useContext(DraftContext);
+ const {body:draft,emojis:chosen,sending,error:sendError}=drafts.get(entry.id)||emptyDraft;
+ const [deleting,setDeleting]=useState(false),[error,setError]=useState('');
+ const busy=sending||deleting;
  const comments=entry.comments||[];
  async function submit(event){
   event.preventDefault();if(busy||(!draft.trim()&&!chosen.length))return;
-  setBusy(true);setError('');
+  update(entry.id,{sending:true,error:''});setError('');
   try{
    await api('/api/entries/'+entry.id+'/comments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:draft,emoji_ids:chosen.map(e=>e.id)})});
-   setDraft('');setChosen([]);
-   try{await refresh()}catch{setError('评论已保存，列表刷新失败，请刷新页面查看。')}
-  }catch(e){setError(e.message)}finally{setBusy(false)}
+   update(entry.id,{body:'',emojis:[]});
+   try{await refresh()}catch{update(entry.id,{error:'评论已保存，列表刷新失败，请刷新页面查看。'})}
+  }catch(e){update(entry.id,{error:e.message})}finally{update(entry.id,{sending:false})}
  }
  async function remove(comment){
   if(busy||!confirm('确定删除自己的这条评论？'))return;
-  setBusy(true);setError('');
+  setDeleting(true);setError('');
   try{await api('/api/comments/'+comment.id,{method:'DELETE'});await refresh()}
-  catch(e){setError(e.message)}finally{setBusy(false)}
+  catch(e){setError(e.message)}finally{setDeleting(false)}
  }
  return <section className="comments" aria-label="帖子评论">
   <h3>留言 <span>{comments.length}</span></h3>
@@ -36,11 +55,11 @@ export function Comments({entry, me, refresh}) {
    <Reactions kind="comments" target={c} me={me} refresh={refresh}/>
   </div>)}</div>
   <form className="comment-form" onSubmit={submit}>
-   <textarea aria-label="评论内容" placeholder="想对你说……" rows="2" maxLength={1000} value={draft} disabled={busy} onChange={e=>setDraft(e.target.value)}/>
-   {!!chosen.length&&<div className="chosen-emojis">{chosen.map((emoji,i)=><button key={i} type="button" disabled={busy} onClick={()=>setChosen(items=>items.filter((_,j)=>j!==i))} aria-label={'移除'+emoji.name}><img src={emoji.url} alt={emoji.name}/><span>×</span></button>)}</div>}
-   <div className="comment-actions"><EmojiPicker disabled={busy||chosen.length>=8} onSelect={emoji=>setChosen(items=>items.length<8?[...items,emoji]:items)}/><span>{draft.length}/1000 · {chosen.length}/8</span><button className="primary" disabled={busy||(!draft.trim()&&!chosen.length)}>{busy?'处理中…':'发送留言'}</button></div>
+   <textarea aria-label="评论内容" placeholder="想对你说……" rows="2" maxLength={1000} value={draft} disabled={busy} onChange={e=>update(entry.id,{body:e.target.value})}/>
+   {!!chosen.length&&<div className="chosen-emojis">{chosen.map((emoji,i)=><button key={i} type="button" disabled={busy} onClick={()=>update(entry.id,{emojis:chosen.filter((_,j)=>j!==i)})} aria-label={'移除'+emoji.name}><img src={emoji.url} alt={emoji.name}/><span>×</span></button>)}</div>}
+   <div className="comment-actions"><EmojiPicker disabled={busy||chosen.length>=8} onSelect={emoji=>update(entry.id,{emojis:[...chosen,emoji].slice(0,8)})}/><span>{draft.length}/1000 · {chosen.length}/8</span><button className="primary" disabled={busy||(!draft.trim()&&!chosen.length)}>{busy?'处理中…':'发送留言'}</button></div>
   </form>
-  {error&&<p role="alert" className="error">{error}</p>}
+  {(error||sendError)&&<p role="alert" className="error">{error||sendError}</p>}
  </section>;
 }
 
