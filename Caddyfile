@@ -5,3 +5,15 @@
     reverse_proxy app:8000
     encode zstd gzip
 }
+
+# 追加到 /home/ubuntu/blue-days/Caddyfile 末尾（由 install-whale.sh 自动插入）
+whale.fefyjoey.xyz {
+	encode zstd gzip
+	basic_auth {
+		alan $2a$14$v7tNjd/k4p1rhSseqFhTZ.t2wBk2Alx.rnAUnPpYPIMXJPpo9ozS2
+	}
+	reverse_proxy 172.18.0.1:3081 {
+		header_up Host {host}
+		flush_interval -1
+	}
+}
