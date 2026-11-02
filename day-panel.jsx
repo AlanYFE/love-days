@@ -1,11 +1,15 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 
-// One detail tree: an inline sidebar on desktop, a native modal sheet on mobile.
-export function DayPanel({day,open,onClose,children}){
+export function useMobileLayout(){
  const [mobile,setMobile]=useState(()=>window.matchMedia('(max-width: 760px)').matches);
- const dialog=useRef(null);
  useEffect(()=>{const query=window.matchMedia('(max-width: 760px)');const change=()=>setMobile(query.matches);query.addEventListener('change',change);return()=>query.removeEventListener('change',change)},[]);
+ return mobile;
+}
+
+// One detail tree: an inline sidebar on desktop, a native modal sheet on mobile.
+export function DayPanel({day,open,onClose,children,mobile}){
+ const dialog=useRef(null);
  useEffect(()=>{
   if(!mobile||!open)return;
   const node=dialog.current,previous=document.activeElement,overflow=document.body.style.overflow;
