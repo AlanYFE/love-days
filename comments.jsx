@@ -23,6 +23,7 @@ export function Comments({entry, me, refresh}) {
  const {drafts,update}=useContext(DraftContext);
  const {body:draft,emojis:chosen,sending,error:sendError}=drafts.get(entry.id)||emptyDraft;
  const [deleting,setDeleting]=useState(false),[error,setError]=useState('');
+ const [writing,setWriting]=useState(Boolean(draft||chosen.length));
  const busy=sending||deleting;
  const comments=entry.comments||[];
  async function submit(event){
@@ -30,7 +31,7 @@ export function Comments({entry, me, refresh}) {
   update(entry.id,{sending:true,error:''});setError('');
   try{
    await api('/api/entries/'+entry.id+'/comments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:draft,emoji_ids:chosen.map(e=>e.id)})});
-   update(entry.id,{body:'',emojis:[]});
+   update(entry.id,{body:'',emojis:[]});setWriting(false);
    try{await refresh()}catch{update(entry.id,{error:'评论已保存，列表刷新失败，请刷新页面查看。'})}
   }catch(e){update(entry.id,{error:e.message})}finally{update(entry.id,{sending:false})}
  }
@@ -54,11 +55,11 @@ export function Comments({entry, me, refresh}) {
    {!!c.emojis?.length&&<div className="comment-stickers">{c.emojis.map((emoji,i)=><a key={i} href={emoji.url} target="_blank" rel="noreferrer"><img src={emoji.url} loading="lazy" alt={emoji.name} title={emoji.name}/></a>)}</div>}
    <Reactions kind="comments" target={c} me={me} refresh={refresh}/>
   </div>)}</div>
-  <form className="comment-form" onSubmit={submit}>
-   <textarea aria-label="评论内容" placeholder="想对你说……" rows="2" maxLength={1000} value={draft} disabled={busy} onChange={e=>update(entry.id,{body:e.target.value})}/>
+  {!writing?<button type="button" className="emoji-trigger write-comment" onClick={()=>setWriting(true)}>留句话</button>:<form className="comment-form" onSubmit={submit}>
+   <textarea autoFocus aria-label="评论内容" placeholder="想对你说……" rows="2" maxLength={1000} value={draft} disabled={busy} onChange={e=>update(entry.id,{body:e.target.value})}/>
    {!!chosen.length&&<div className="chosen-emojis">{chosen.map((emoji,i)=><button key={i} type="button" disabled={busy} onClick={()=>update(entry.id,{emojis:chosen.filter((_,j)=>j!==i)})} aria-label={'移除'+emoji.name}><img src={emoji.url} alt={emoji.name}/><span>×</span></button>)}</div>}
    <div className="comment-actions"><EmojiPicker disabled={busy||chosen.length>=8} onSelect={emoji=>update(entry.id,{emojis:[...chosen,emoji].slice(0,8)})}/><span>{draft.length}/1000 · {chosen.length}/8</span><button className="primary" disabled={busy||(!draft.trim()&&!chosen.length)}>{busy?'处理中…':'发送留言'}</button></div>
-  </form>
+  </form>}
   {(error||sendError)&&<p role="alert" className="error">{error||sendError}</p>}
  </section>;
 }
