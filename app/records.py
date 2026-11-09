@@ -30,11 +30,15 @@ def records(day=None, month=None):
         for row in c.execute('SELECT et.entry_id,t.id,t.name FROM entry_tags et JOIN tags t ON t.id=et.tag_id WHERE et.entry_id IN (SELECT id FROM record_scope) ORDER BY t.created,t.id'):
             tagged.setdefault(row['entry_id'], []).append({'id':row['id'],'name':row['name']})
         attached = {}
+        comment_images = {}
+        for row in c.execute('SELECT m.id,m.comment_id,x.motion FROM comment_media m LEFT JOIN comment_media_extras x ON x.media_id=m.id WHERE comment_id IN (SELECT id FROM comments WHERE entry_id IN (SELECT id FROM record_scope)) ORDER BY comment_id,position'):
+            comment_images.setdefault(row['comment_id'], []).append({'id':row['id'],'kind':'image','url':'/comment-media/'+row['id'],'thumb':'/comment-media/'+row['id']+'/thumb','live':bool(row['motion']),'motion_url':'/comment-media/'+row['id']+'/motion' if row['motion'] else None})
         for row in c.execute('SELECT ce.comment_id,e.id,e.name FROM comment_emojis ce JOIN emojis e ON e.id=ce.emoji_id WHERE ce.comment_id IN (SELECT id FROM comments WHERE entry_id IN (SELECT id FROM record_scope)) ORDER BY ce.comment_id,ce.position'):
             attached.setdefault(row['comment_id'], []).append(emoji_data({'id':row['id'],'name':row['name']}))
     by_comment_entry = {}
     for comment in comments:
         comment['emojis'] = attached.get(comment['id'], [])
+        comment['images'] = comment_images.get(comment['id'], [])
         comment['reactions'] = comment_reactions.get(comment['id'], [])
         by_comment_entry.setdefault(comment['entry_id'], []).append(comment)
     by_entry = {}
