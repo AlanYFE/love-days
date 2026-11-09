@@ -1,6 +1,9 @@
 """Bounded Motion Photo extraction and a browser-compatible playback derivative."""
 import json
 import subprocess
+import zipfile
+import zlib
+from pathlib import PurePosixPath
 import xml.etree.ElementTree as ET
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
@@ -9,6 +12,44 @@ register_heif_opener()
 CAM = 'http://ns.google.com/photos/1.0/camera/'
 ITEM = 'http://ns.google.com/photos/1.0/container/item/'
 OP = 'http://ns.oplus.com/photos/1.0/camera/'
+
+def unpack_livp(source, still, movie, max_file, remaining):
+    """Read a single Apple photo/movie pair without extracting archive paths."""
+    try:
+        with zipfile.ZipFile(source) as archive:
+            entries = archive.infolist()
+            if len(entries) > 16:
+                raise ValueError('实况包包含太多文件')
+            files = []
+            for info in entries:
+                name = PurePosixPath(info.filename)
+                if name.is_absolute() or '..' in name.parts or '\\' in info.filename:
+                    raise ValueError('实况包路径无效')
+                if info.is_dir():
+                    continue
+                if info.flag_bits & 1 or info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise ValueError('不支持加密或此压缩方式的实况包')
+                files.append(info)
+            photos = [i for i in files if PurePosixPath(i.filename).suffix.lower() in ('.heic','.heif','.jpg','.jpeg')]
+            movies = [i for i in files if PurePosixPath(i.filename).suffix.lower() in ('.mov','.mp4')]
+            if len(files) != 2 or len(photos) != 1 or len(movies) != 1:
+                raise ValueError('每个 .livp 须包含一张 HEIC/JPG 照片和一个 MOV/MP4 视频')
+            total = sum(i.file_size for i in files)
+            if total > remaining or any(not 0 < i.file_size <= max_file for i in files):
+                raise ValueError('实况包解压后超出限制：单个文件 100 MB，合计 200 MB')
+            for info, target in ((photos[0], still), (movies[0], movie)):
+                written = 0
+                with archive.open(info) as inp, target.open('wb') as out:
+                    while chunk := inp.read(1024 * 1024):
+                        written += len(chunk)
+                        if written > info.file_size or written > max_file:
+                            raise ValueError('实况包文件大小无效')
+                        out.write(chunk)
+                if written != info.file_size:
+                    raise ValueError('实况包不完整')
+            return total
+    except (zipfile.BadZipFile, zlib.error, NotImplementedError, RuntimeError, EOFError) as exc:
+        raise ValueError('无法读取实况包，请选择完整的 .livp 文件') from exc
 
 def motion_range(path):
     # Read XMP from the still image, not by searching arbitrary video bytes.

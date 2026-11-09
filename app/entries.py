@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from .activities import add_activity
 from .auth import user
 from .core import LIVE_PROCESSING, MAX_FILE, MAX_TOTAL, MEDIA, db
-from .live import extract_motion, motion_range, still_jpeg, transcode_motion
+from .live import extract_motion, motion_range, still_jpeg, transcode_motion, unpack_livp
 from .locations import save_location, stored_location, validate_location
 from .media import make_image, validate_video, video_thumb
 from .tags import check_tags, validate_tag_ids
@@ -73,19 +73,37 @@ async def create(request: Request):
                 thumb = MEDIA / (mid+'.jpg')
                 paths.append(thumb)
                 display = motion = companion = None
+                choice = options[index] if options is not None else {'enabled':True,'paired':False}
+                package = (f.filename or '').lower().endswith('.livp')
+                if package:
+                    if choice['paired']:
+                        raise HTTPException(400, '实况包已包含视频，无需补选')
+                    unpacked = MEDIA / (mid+'.unpacked')
+                    companion = MEDIA / (mid+'.source.mov')
+                    paths.extend((unpacked, companion))
+                    try:
+                        unpacked_size = await asyncio.to_thread(unpack_livp,path,unpacked,companion,MAX_FILE,MAX_TOTAL-total+size)
+                        total += max(0, unpacked_size-size)
+                        unpacked.replace(path)
+                        if not choice['enabled']:
+                            companion.unlink()
+                            companion = None
+                    except ValueError as exc:
+                        raise HTTPException(400, str(exc))
                 try:
                     await asyncio.to_thread(make_image,path,thumb)
                     with Image.open(path) as original:
                         kind, mime = 'image', Image.MIME.get(original.format, 'image/jpeg')
                         heif = original.format in ('HEIF', 'AVIF')
                 except Exception:
+                    if package:
+                        raise HTTPException(400, '实况包中的照片无法读取')
                     with path.open('rb') as stream:
                         head = stream.read(32)
                     if head[4:8] != b'ftyp' or head[8:12] in (b'heic',b'heix',b'mif1',b'avif') or not await asyncio.to_thread(validate_video,path):
                         raise HTTPException(400,'图片或视频无法读取，请使用 JPG、PNG、WebP、HEIC 或 MP4／MOV')
                     kind, mime = 'video', 'video/mp4'
                     await asyncio.to_thread(video_thumb,path,thumb)
-                choice = options[index] if options is not None else {'enabled':True,'paired':False}
                 if kind == 'image':
                     try:
                         # A damaged live file can still be explicitly saved as a still.
@@ -104,6 +122,8 @@ async def create(request: Request):
                                     if pair_size > MAX_FILE or total > MAX_TOTAL:
                                         raise HTTPException(413, '配套视频计入上传限制：单个 100 MB，合计 200 MB')
                                     out.write(chunk)
+                        elif companion:
+                            pass  # Already unpacked from a .livp package.
                         elif span:
                             companion = MEDIA / (mid+'.source.mov')
                             paths.append(companion)
