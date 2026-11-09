@@ -70,6 +70,7 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,created REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS comment_media(id TEXT PRIMARY KEY,comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,position INTEGER NOT NULL,mime TEXT NOT NULL,path TEXT NOT NULL,thumb TEXT NOT NULL,display TEXT);
     CREATE INDEX IF NOT EXISTS comment_media_comment ON comment_media(comment_id,position);
+    CREATE TABLE IF NOT EXISTS comment_media_extras(media_id TEXT PRIMARY KEY REFERENCES comment_media(id) ON DELETE CASCADE,motion TEXT NOT NULL,companion TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS entries_day_created ON entries(day,created);
     CREATE INDEX IF NOT EXISTS media_entry ON media(entry_id);
     CREATE INDEX IF NOT EXISTS comments_entry_created ON comments(entry_id,created);

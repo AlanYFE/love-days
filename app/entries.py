@@ -238,6 +238,7 @@ def delete(eid: str, request: Request):
         rows = c.execute('SELECT path,thumb FROM media WHERE entry_id=?',(eid,)).fetchall()
         rows += c.execute('SELECT x.display,x.motion,x.companion FROM media_extras x JOIN media m ON m.id=x.media_id WHERE m.entry_id=?',(eid,)).fetchall()
         rows += c.execute('SELECT path,thumb,display FROM comment_media WHERE comment_id IN (SELECT id FROM comments WHERE entry_id=?)',(eid,)).fetchall()
+        rows += c.execute('SELECT x.motion,x.companion FROM comment_media_extras x JOIN comment_media m ON m.id=x.media_id JOIN comments c ON c.id=m.comment_id WHERE c.entry_id=?',(eid,)).fetchall()
         c.execute('DELETE FROM entries WHERE id=?',(eid,))
     for row in rows:
         for name in row:

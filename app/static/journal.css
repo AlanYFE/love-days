@@ -62,3 +62,5 @@ input:focus,textarea:focus,button:focus-visible,a:focus-visible,
 .comment-form .comment-actions{flex-wrap:wrap;justify-content:flex-start}
 .comment-form .comment-actions .primary{margin-left:auto;min-height:44px}
 .comment-form .comment-actions>.emoji-trigger{min-height:44px}
+
+.comment-images button{position:relative}.comment-live-badge{position:absolute;left:4px;bottom:4px;background:#263b50cc;color:white;padding:2px 5px;border-radius:4px;font-size:11px}.comment-file-import{display:block;font-size:12px;margin-top:10px}.comment-file-import input{max-width:100%;font-size:14px}.comment-form .live-upload-name{overflow-wrap:anywhere}

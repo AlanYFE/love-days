@@ -11,13 +11,19 @@ router = APIRouter()
 
 @router.get('/comment-media/{mid}')
 @router.get('/comment-media/{mid}/thumb')
+@router.get('/comment-media/{mid}/motion')
 def comment_media(mid: str, request: Request):
     user(request)
     with db() as c:
         row = c.execute('SELECT * FROM comment_media WHERE id=?', (mid,)).fetchone()
+        extra = c.execute('SELECT * FROM comment_media_extras WHERE media_id=?', (mid,)).fetchone()
     if not row:
         raise HTTPException(404)
-    if request.url.path.endswith('/thumb'):
+    if request.url.path.endswith('/motion'):
+        if not extra:
+            raise HTTPException(404)
+        name, mime = extra['motion'], 'video/mp4'
+    elif request.url.path.endswith('/thumb'):
         name, mime = row['thumb'], 'image/jpeg'
     else:
         name, mime = (row['display'], 'image/jpeg') if row['display'] else (row['path'], row['mime'])
