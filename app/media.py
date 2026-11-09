@@ -9,6 +9,22 @@ from .core import MEDIA, db
 
 router = APIRouter()
 
+@router.get('/comment-media/{mid}')
+@router.get('/comment-media/{mid}/thumb')
+def comment_media(mid: str, request: Request):
+    user(request)
+    with db() as c:
+        row = c.execute('SELECT * FROM comment_media WHERE id=?', (mid,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    if request.url.path.endswith('/thumb'):
+        name, mime = row['thumb'], 'image/jpeg'
+    else:
+        name, mime = (row['display'], 'image/jpeg') if row['display'] else (row['path'], row['mime'])
+    if not (MEDIA/name).is_file():
+        raise HTTPException(404)
+    return FileResponse(MEDIA/name, media_type=mime)
+
 def make_image(source, dest):
     with Image.open(source) as im:
         im = ImageOps.exif_transpose(im)

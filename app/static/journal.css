@@ -49,3 +49,16 @@ input:focus,textarea:focus,button:focus-visible,a:focus-visible,
 .month-pixels{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}
 .month-pixels i{aspect-ratio:1;background:var(--heat);border-radius:1px}
 .write-comment{min-height:44px}
+
+/* Comment photos remain compact; full images open in the existing viewer. */
+.comment-images{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.comment-images button{padding:0;border-radius:6px;overflow:hidden;background:var(--control-paper,#efeee7)}
+.comment-images img{display:block;width:88px;height:88px;object-fit:cover}
+.comment-image-drafts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.comment-image-draft{position:relative;width:100px;min-height:100px;background:#efeee7;border-radius:6px;padding:4px}
+.comment-image-draft>img{width:92px;height:76px;object-fit:cover;border-radius:4px}
+.comment-image-draft .draft-image-name{display:block;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.comment-image-draft>button{position:absolute;top:0;right:0;width:44px;height:44px;background:#fffefbee;border-radius:6px;font-size:22px;color:#344650}
+.comment-form .comment-actions{flex-wrap:wrap;justify-content:flex-start}
+.comment-form .comment-actions .primary{margin-left:auto;min-height:44px}
+.comment-form .comment-actions>.emoji-trigger{min-height:44px}
