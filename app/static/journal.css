@@ -105,7 +105,10 @@ input:focus,textarea:focus,button:focus-visible,a:focus-visible,
 .comment-form .comment-actions .primary{margin-left:auto;min-height:44px}
 .comment-form .comment-actions>.emoji-trigger{min-height:44px}
 
-.comment-images button{position:relative}.comment-live-badge{position:absolute;left:4px;bottom:4px;background:var(--color-media-control);color:var(--color-text-inverse);padding:2px 5px;border-radius:4px;font-size:11px}.comment-file-import{display:block;font-size:12px;margin-top:10px}.comment-file-import input{max-width:100%;font-size:14px}.comment-form .live-upload-name{overflow-wrap:anywhere}
+.comment-images button{position:relative}.comment-live-badge{position:absolute;left:4px;bottom:4px;background:var(--color-media-control);color:var(--color-text-inverse);padding:2px 5px;border-radius:4px;font-size:11px}.comment-file-import {
+  margin: 10px 0 0;
+  font-size: 12px;
+}.comment-form .live-upload-name{overflow-wrap:anywhere}
 
 /* Quiet paper surfaces use edges, not tinted fills, for grouping. */
 .comment,.activity-summary.has-unread{background:var(--color-surface-card);border:1px solid var(--color-border)}
@@ -172,4 +175,44 @@ input::placeholder,textarea::placeholder{color:var(--color-text-secondary);opaci
     top: 5px;
     right: 5px;
   }
+}
+
+/* The label is the full tap target. The clipped native picker stays in the tab order. */
+.file-picker {
+  position: relative;
+  display: grid;
+  align-content: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--control-paper);
+  color: var(--color-action);
+  cursor: pointer;
+}
+.file-picker.upload {
+  padding: 18px;
+}
+.file-picker:has(.file-picker-input:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.file-picker:has(.file-picker-input:disabled) {
+  cursor: default;
+  opacity: .6;
+}
+@media (hover: hover) {
+  .file-picker:not(:has(.file-picker-input:disabled)):hover {
+    background: var(--color-surface-hover);
+  }
+}
+.file-picker .file-picker-input {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
 }
