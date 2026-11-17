@@ -134,10 +134,7 @@ input::placeholder,textarea::placeholder{color:var(--color-text-secondary);opaci
 .upcoming-days b,.upcoming-days .occasion-icon,.brand-dot{color:var(--color-occasion)}
 .monthly-dialog input,.monthly-dialog textarea,.monthly-dialog select{background:var(--color-surface-card)}
 
-/* A cover replaces the heat fill in the photo month view. */
-.day:has(> img) {
-  border-bottom: 0;
-}
+/* Keep the photo overlay local to the date label. */
 .day:has(> img)::after {
   content: "";
   position: absolute;
