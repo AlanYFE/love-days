@@ -88,7 +88,7 @@ export function Comments({entry, me, refresh}) {
    <p className="hint">最多 4 张图片或实况；每张含配套视频合计 10 MB，动态最长 15 秒。</p>
    <input ref={imageInput} type="file" hidden multiple accept="image/*,video/*" disabled={busy||files.length>=8} aria-label="选择留言图片" onChange={chooseImages}/>
    {!!files.length&&<LiveUploads files={files} value={liveOptions} onChange={options=>update(entry.id,{liveOptions:options})} onBusyChange={setLiveDetecting} disabled={busy} limitHint="每张实况含配套视频合计 10 MB，动态最长 15 秒。"/>}
-   <label className="comment-file-import">从文件导入实况<input type="file" multiple disabled={busy||files.length>=8} onChange={chooseImages} aria-label="导入留言实况文件"/></label>
+   <label className="comment-file-import file-picker">从文件导入实况<input className="file-picker-input" type="file" multiple disabled={busy||files.length>=8} onChange={chooseImages} aria-label="导入留言实况文件"/></label>
    <div className="comment-actions"><button type="button" className="emoji-trigger" disabled={busy||files.length>=8} onClick={()=>imageInput.current?.click()}>＋ 图片{files.length?` ${uploadItems(files,liveOptions).length}/4`:""}</button><EmojiPicker disabled={busy||chosen.length>=8} onSelect={emoji=>update(entry.id,{emojis:[...chosen,emoji].slice(0,8)})}/><span>{draft.length}/1000 · {chosen.length}/8</span><button className="primary" disabled={busy||(!draft.trim()&&!chosen.length&&!files.length)}>{busy?'处理中…':'发送留言'}</button></div>
   </form>}
   {gallery&&<PhotoViewer photos={gallery.photos} initialIndex={gallery.index} onClose={()=>setGallery(null)}/>}
