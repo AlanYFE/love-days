@@ -1,12 +1,13 @@
+import {Icon} from './icons.jsx';
 import React,{useState,useEffect,useRef} from 'react';
 import {createPortal} from 'react-dom';
 export function LocationDisplay({value}){
  if(!value)return null;
  const label=[value.city,value.name].filter(Boolean).join(' · ');
- if(value.lat==null)return <p className="entry-location">📍 {label}</p>;
+ if(value.lat==null)return <p className="entry-location"><Icon name="pin"/> {label}</p>;
  const clean=text=>(text||'').replaceAll(';','；').replaceAll('|','｜').replaceAll(':','：');
  const params=new URLSearchParams({marker:`coord:${value.lat},${value.lng};title:${clean(value.name)};addr:${clean(value.address||value.city)}`,referer:'LoveDays'});
- return <a className="entry-location" href={'https://apis.map.qq.com/uri/v1/marker?'+params} target="_blank" rel="noopener noreferrer" title="在腾讯地图查看">📍 {label} ↗</a>;
+ return <a className="entry-location" href={'https://apis.map.qq.com/uri/v1/marker?'+params} target="_blank" rel="noopener noreferrer" title="在腾讯地图查看"><Icon name="pin"/> {label} ↗</a>;
 }
 function MapPicker({config,value,onSelect,onClose}){
  const dialog=useRef(null),frame=useRef(null),timerRef=useRef(null);
@@ -27,5 +28,5 @@ export default function LocationPicker({value,onChange,disabled,request}){
  const [config,setConfig]=useState(null),[open,setOpen]=useState(false),[error,setError]=useState('');
  useEffect(()=>{let active=true;request('/api/map-config').then(c=>{if(active)setConfig(c)}).catch(()=>{if(active)setError('地图暂时不可用，仍可手动填写。')});return()=>{active=false}},[request]);
  function manual(field,text){const next={name:value?.name||'',city:value?.city||'',address:'',lat:null,lng:null,source:'manual',coordinate_system:null,[field]:text};onChange(next.name||next.city?next:null)}
- return <fieldset className="location-picker" disabled={disabled}><legend>📍 地点（选填）</legend><div className="location-fields"><label>地点名称<input maxLength={120} value={value?.name||''} onChange={e=>manual('name',e.target.value)} placeholder="例如：平江路 / 第一次约会的地方"/></label><label>城市<input maxLength={80} value={value?.city||''} onChange={e=>manual('city',e.target.value)} placeholder="例如：苏州"/></label></div>{value?.lat!=null&&<p className="hint">已保存地图坐标 · {value.address}。手动修改名称或城市会清除坐标，可重新选点。</p>}<div className="location-actions"><button type="button" className="emoji-trigger" disabled={disabled||!config?.key} onClick={()=>setOpen(true)}>地图搜索 / 选点</button>{value&&<button type="button" className="textbtn" onClick={()=>onChange(null)}>移除地点</button>}</div>{!config?.key&&<p className="hint">{error||'可先手动填写地点；地图配置完成后可搜索选点。'}</p>}{open&&<MapPicker config={config} value={value} onClose={()=>setOpen(false)} onSelect={v=>{onChange(v);setOpen(false)}}/>}</fieldset>;
+ return <fieldset className="location-picker" disabled={disabled}><legend><Icon name="pin"/> 地点（选填）</legend><div className="location-fields"><label>地点名称<input maxLength={120} value={value?.name||''} onChange={e=>manual('name',e.target.value)} placeholder="例如：平江路 / 第一次约会的地方"/></label><label>城市<input maxLength={80} value={value?.city||''} onChange={e=>manual('city',e.target.value)} placeholder="例如：苏州"/></label></div>{value?.lat!=null&&<p className="hint">已保存地图坐标 · {value.address}。手动修改名称或城市会清除坐标，可重新选点。</p>}<div className="location-actions"><button type="button" className="emoji-trigger" disabled={disabled||!config?.key} onClick={()=>setOpen(true)}>地图搜索 / 选点</button>{value&&<button type="button" className="textbtn" onClick={()=>onChange(null)}>移除地点</button>}</div>{!config?.key&&<p className="hint">{error||'可先手动填写地点；地图配置完成后可搜索选点。'}</p>}{open&&<MapPicker config={config} value={value} onClose={()=>setOpen(false)} onSelect={v=>{onChange(v);setOpen(false)}}/>}</fieldset>;
 }
